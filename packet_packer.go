@@ -141,6 +141,7 @@ type frameSource interface {
 	HasData() bool
 	AppendStreamFrames([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
 	AppendControlFrames([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
+	AppendPingFrame([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
 }
 
 type ackFrameSource interface {
@@ -473,6 +474,9 @@ func (p *packetPacker) PackPacket() (*packedPacket, error) {
 	if hdr.IsLongHeader {
 		encLevel = protocol.Encryption0RTT
 	}
+	////Padding to the max packet size
+	//paddingToMaxLen := p.maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
+	//cont, err := p.appendPacket(buffer, hdr, payload, paddingToMaxLen, encLevel, sealer, false)
 	cont, err := p.appendPacket(buffer, hdr, payload, 0, encLevel, sealer, false)
 	if err != nil {
 		return nil, err
@@ -619,7 +623,11 @@ func (p *packetPacker) composeNextPacket(maxFrameSize protocol.ByteCount, ackAll
 		}
 	}
 
+	// Send PING if sending is scheduled but there is nothing to send.
 	if ack == nil && !hasData && !hasRetransmission {
+		//var lengthAdded protocol.ByteCount
+		//payload.frames, lengthAdded = p.framer.AppendPingFrame(payload.frames, maxFrameSize-payload.length)
+		//payload.length += lengthAdded
 		return payload
 	}
 

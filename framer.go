@@ -2,7 +2,9 @@ package quic
 
 import (
 	"errors"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/lucas-clemente/quic-go/internal/ackhandler"
 	"github.com/lucas-clemente/quic-go/internal/protocol"
@@ -18,6 +20,8 @@ type framer interface {
 
 	AddActiveStream(protocol.StreamID)
 	AppendStreamFrames([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
+
+	AppendPingFrame([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
 
 	Handle0RTTRejection() error
 }
@@ -84,6 +88,19 @@ func (f *framerI) AppendControlFrames(frames []ackhandler.Frame, maxLen protocol
 	return frames, length
 }
 
+func (f *framerI) AppendPingFrame(frames []ackhandler.Frame, maxLen protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount) {
+	var length protocol.ByteCount
+	f.controlFrameMutex.Lock()
+	frame := &wire.PingFrame{}
+	frameLen := frame.Length(f.version)
+	if length+frameLen < maxLen {
+		frames = append(frames, ackhandler.Frame{Frame: frame})
+		length += frameLen
+	}
+	f.controlFrameMutex.Unlock()
+	return frames, length
+}
+
 func (f *framerI) AddActiveStream(id protocol.StreamID) {
 	f.mutex.Lock()
 	if _, ok := f.activeStreams[id]; !ok {
@@ -99,6 +116,7 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 	f.mutex.Lock()
 	// pop STREAM frames, until less than MinStreamFrameSize bytes are left in the packet
 	numActiveStreams := len(f.streamQueue)
+	fmt.Printf("numActiveStreams: %d, time now: %v\n", numActiveStreams, time.Now())
 	for i := 0; i < numActiveStreams; i++ {
 		if protocol.MinStreamFrameSize+length > maxLen {
 			break

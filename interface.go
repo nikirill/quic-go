@@ -295,6 +295,8 @@ type Config struct {
 	// Datagrams will only be available when both peers enable datagram support.
 	EnableDatagrams bool
 	Tracer          logging.Tracer
+	// When constant-rate sending is enabled, the rate is fixed to the value below.
+	SendingRate time.Duration
 }
 
 // ConnectionState records basic details about a QUIC connection
