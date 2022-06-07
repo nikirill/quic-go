@@ -568,7 +568,8 @@ func (s *connection) run() error {
 		closeErr           closeError
 		sendQueueAvailable <-chan struct{}
 	)
-
+	
+	ticker := time.NewTicker(s.config.SendingRate)
 runLoop:
 	for {
 		// Close immediately if requested
@@ -603,14 +604,18 @@ runLoop:
 			select {
 			case closeErr = <-s.closeChan:
 				break runLoop
+			case <-ticker.C:
 			case <-s.timer.Chan():
 				s.timer.SetRead()
+				continue runLoop
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-s.sendingScheduled:
+				continue runLoop
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-sendQueueAvailable:
+				continue runLoop
 			case firstPacket := <-s.receivedPackets:
 				wasProcessed := s.handlePacketImpl(firstPacket)
 				// Don't set timers and send packets if the packet made us close the connection.
@@ -647,6 +652,7 @@ runLoop:
 				if !wasProcessed {
 					continue
 				}
+				continue runLoop
 			case <-s.handshakeCompleteChan:
 				s.handleHandshakeComplete()
 			}
@@ -661,12 +667,13 @@ runLoop:
 			}
 		}
 
-		if keepAliveTime := s.nextKeepAliveTime(); !keepAliveTime.IsZero() && !now.Before(keepAliveTime) {
-			// send a PING frame since there is no activity in the connection
-			s.logger.Debugf("Sending a keep-alive PING to keep the connection alive.")
-			s.framer.QueueControlFrame(&wire.PingFrame{})
-			s.keepAlivePingSent = true
-		} else if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
+		//if keepAliveTime := s.nextKeepAliveTime(); !keepAliveTime.IsZero() && !now.Before(keepAliveTime) {
+		//	// send a PING frame since there is no activity in the connection
+		//	s.logger.Debugf("Sending a keep-alive PING to keep the connection alive.")
+		//	s.framer.QueueControlFrame(&wire.PingFrame{})
+		//	s.keepAlivePingSent = true
+		//} else if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
+		if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
 			s.destroyImpl(qerr.ErrHandshakeTimeout)
 			continue
 		} else {
@@ -702,6 +709,7 @@ runLoop:
 	s.cryptoStreamHandler.Close()
 	s.sendQueue.Close()
 	s.timer.Stop()
+	ticker.Stop()
 	return closeErr.err
 }
 
@@ -1690,14 +1698,17 @@ func (s *connection) sendPackets() error {
 		default:
 			return fmt.Errorf("BUG: invalid send mode %d", sendMode)
 		}
-		// Prioritize receiving of packets over sending out more packets.
-		if len(s.receivedPackets) > 0 {
-			s.pacingDeadline = deadlineSendImmediately
-			return nil
-		}
-		if s.sendQueue.WouldBlock() {
-			return nil
-		}
+		// Send only one packet at a time.
+		return nil
+
+		//// Prioritize receiving of packets over sending out more packets.
+		//if len(s.receivedPackets) > 0 {
+		//	s.pacingDeadline = deadlineSendImmediately
+		//	return nil
+		//}
+		//if s.sendQueue.WouldBlock() {
+		//	return nil
+		//}
 	}
 }
 
