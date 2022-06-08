@@ -568,7 +568,8 @@ func (s *connection) run() error {
 		closeErr           closeError
 		sendQueueAvailable <-chan struct{}
 	)
-	
+
+	// The constant-rate sending period.
 	ticker := time.NewTicker(s.config.SendingRate)
 runLoop:
 	for {
@@ -605,17 +606,24 @@ runLoop:
 			case closeErr = <-s.closeChan:
 				break runLoop
 			case <-ticker.C:
+				//	Ticker defines when to send the next packet.
 			case <-s.timer.Chan():
 				s.timer.SetRead()
-				continue runLoop
+				if s.handshakeComplete {
+					continue runLoop
+				}
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-s.sendingScheduled:
-				continue runLoop
+				if s.handshakeComplete {
+					continue runLoop
+				}
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-sendQueueAvailable:
-				continue runLoop
+				if s.handshakeComplete {
+					continue runLoop
+				}
 			case firstPacket := <-s.receivedPackets:
 				wasProcessed := s.handlePacketImpl(firstPacket)
 				// Don't set timers and send packets if the packet made us close the connection.
@@ -645,6 +653,8 @@ runLoop:
 							break receiveLoop
 						}
 					}
+					// If the handshake is complete, we do constant rate.
+					continue runLoop
 				}
 				// Only reset the timers if this packet was actually processed.
 				// This avoids modifying any state when handling undecryptable packets,
@@ -652,7 +662,6 @@ runLoop:
 				if !wasProcessed {
 					continue
 				}
-				continue runLoop
 			case <-s.handshakeCompleteChan:
 				s.handleHandshakeComplete()
 			}
@@ -1698,21 +1707,25 @@ func (s *connection) sendPackets() error {
 		default:
 			return fmt.Errorf("BUG: invalid send mode %d", sendMode)
 		}
-		// Send only one packet at a time.
-		return nil
 
-		//// Prioritize receiving of packets over sending out more packets.
-		//if len(s.receivedPackets) > 0 {
-		//	s.pacingDeadline = deadlineSendImmediately
-		//	return nil
-		//}
-		//if s.sendQueue.WouldBlock() {
-		//	return nil
-		//}
+		// Prioritize receiving of packets over sending out more packets.
+		if len(s.receivedPackets) > 0 {
+			s.pacingDeadline = deadlineSendImmediately
+			return nil
+		}
+		if s.sendQueue.WouldBlock() {
+			return nil
+		}
+
+		// If the handshake has been completed, we start sending only one packet at a time.
+		if s.handshakeComplete {
+			return nil
+		}
 	}
 }
 
 func (s *connection) maybeSendAckOnlyPacket() error {
+	fmt.Println("maybeSendAckOnlyPacket", time.Now())
 	packet, err := s.packer.MaybePackAckPacket(s.handshakeConfirmed)
 	if err != nil {
 		return err
