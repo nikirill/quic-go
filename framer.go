@@ -2,14 +2,11 @@ package quic
 
 import (
 	"errors"
-	"fmt"
-	"sync"
-	"time"
-
 	"github.com/lucas-clemente/quic-go/internal/ackhandler"
 	"github.com/lucas-clemente/quic-go/internal/protocol"
 	"github.com/lucas-clemente/quic-go/internal/wire"
 	"github.com/lucas-clemente/quic-go/quicvarint"
+	"sync"
 )
 
 type framer interface {
@@ -116,7 +113,6 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 	f.mutex.Lock()
 	// pop STREAM frames, until less than MinStreamFrameSize bytes are left in the packet
 	numActiveStreams := len(f.streamQueue)
-	fmt.Printf("numActiveStreams: %d, time now: %v\n", numActiveStreams, time.Now())
 	for i := 0; i < numActiveStreams; i++ {
 		if protocol.MinStreamFrameSize+length > maxLen {
 			break
