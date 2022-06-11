@@ -44,7 +44,7 @@ const (
 )
 
 func versionToALPN(v protocol.VersionNumber) string {
-	if v == protocol.Version1 {
+	if v == protocol.Version1 || v == protocol.Version2 {
 		return nextProtoH3
 	}
 	if v == protocol.VersionTLS || v == protocol.VersionDraft29 {
@@ -63,11 +63,9 @@ func ConfigureTLSConfig(tlsConf *tls.Config) *tls.Config {
 	return &tls.Config{
 		GetConfigForClient: func(ch *tls.ClientHelloInfo) (*tls.Config, error) {
 			// determine the ALPN from the QUIC version used
-			proto := nextProtoH3Draft29
+			proto := nextProtoH3
 			if qconn, ok := ch.Conn.(handshake.ConnWithVersion); ok {
-				if qconn.GetQUICVersion() == protocol.Version1 {
-					proto = nextProtoH3
-				}
+				proto = versionToALPN(qconn.GetQUICVersion())
 			}
 			config := tlsConf
 			if tlsConf.GetConfigForClient != nil {
@@ -549,7 +547,8 @@ func (s *Server) handleRequest(conn quic.Connection, str quic.Stream, decoder *q
 	}
 
 	req.RemoteAddr = conn.RemoteAddr().String()
-	req.Body = newRequestBody(str, onFrameError)
+	body := newRequestBody(newStream(str, onFrameError))
+	req.Body = body
 
 	if s.logger.Debug() {
 		s.logger.Infof("%s %s%s, on stream %d", req.Method, req.Host, req.RequestURI, str.StreamID())
@@ -562,11 +561,7 @@ func (s *Server) handleRequest(conn quic.Connection, str quic.Stream, decoder *q
 	ctx = context.WithValue(ctx, http.LocalAddrContextKey, conn.LocalAddr())
 	req = req.WithContext(ctx)
 	r := newResponseWriter(str, conn, s.logger)
-	defer func() {
-		if !r.usedDataStream() {
-			r.Flush()
-		}
-	}()
+	defer r.Flush()
 	handler := s.Handler
 	if handler == nil {
 		handler = http.DefaultServeMux
@@ -587,7 +582,7 @@ func (s *Server) handleRequest(conn quic.Connection, str quic.Stream, decoder *q
 		handler.ServeHTTP(r, req)
 	}()
 
-	if r.usedDataStream() {
+	if body.wasStreamHijacked() {
 		return requestError{err: errHijacked}
 	}
 

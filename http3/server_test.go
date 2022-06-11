@@ -135,11 +135,8 @@ var _ = Describe("Server", func() {
 			buf := &bytes.Buffer{}
 			str := mockquic.NewMockStream(mockCtrl)
 			str.EXPECT().Write(gomock.Any()).DoAndReturn(buf.Write).AnyTimes()
-			closed := make(chan struct{})
-			str.EXPECT().Close().Do(func() { close(closed) })
 			rw := newRequestWriter(utils.DefaultLogger)
-			Expect(rw.WriteRequest(str, req, false, false)).To(Succeed())
-			Eventually(closed).Should(BeClosed())
+			Expect(rw.WriteRequestHeader(str, req, false)).To(Succeed())
 			return buf.Bytes()
 		}
 
@@ -162,7 +159,6 @@ var _ = Describe("Server", func() {
 
 			qpackDecoder = qpack.NewDecoder(nil)
 			str = mockquic.NewMockStream(mockCtrl)
-
 			conn = mockquic.NewMockEarlyConnection(mockCtrl)
 			addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1337}
 			conn.EXPECT().RemoteAddr().Return(addr).AnyTimes()
@@ -220,45 +216,6 @@ var _ = Describe("Server", func() {
 			Expect(serr.err).ToNot(HaveOccurred())
 			hfs := decodeHeader(responseBuf)
 			Expect(hfs).To(HaveKeyWithValue(":status", []string{"500"}))
-		})
-
-		It("doesn't close the stream if the handler called DataStream()", func() {
-			s.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				str := w.(DataStreamer).DataStream()
-				str.Write([]byte("foobar"))
-			})
-
-			rspWritten := make(chan struct{})
-			setRequest(encodeRequest(exampleGetRequest))
-			str.EXPECT().Context().Return(reqContext)
-			str.EXPECT().Write([]byte("foobar")).Do(func(b []byte) (int, error) {
-				close(rspWritten)
-				return len(b), nil
-			})
-			// don't EXPECT CancelRead()
-
-			ctrlStr := mockquic.NewMockStream(mockCtrl)
-			ctrlStr.EXPECT().Write(gomock.Any()).AnyTimes()
-			conn.EXPECT().OpenUniStream().Return(ctrlStr, nil)
-			conn.EXPECT().AcceptUniStream(gomock.Any()).DoAndReturn(func(context.Context) (quic.ReceiveStream, error) {
-				<-rspWritten
-				return nil, errors.New("done")
-			})
-			conn.EXPECT().AcceptStream(gomock.Any()).Return(str, nil)
-			conn.EXPECT().AcceptStream(gomock.Any()).DoAndReturn(func(context.Context) (quic.Stream, error) {
-				<-rspWritten
-				return nil, errors.New("done")
-			})
-
-			done := make(chan struct{})
-			go func() {
-				defer GinkgoRecover()
-				defer close(done)
-				s.handleConn(conn)
-			}()
-			Eventually(rspWritten).Should(BeClosed())
-			time.Sleep(50 * time.Millisecond) // make sure that after str.Write there are no further calls to stream methods
-			Eventually(done).Should(BeClosed())
 		})
 
 		Context("hijacking bidirectional streams", func() {
@@ -522,7 +479,7 @@ var _ = Describe("Server", func() {
 				})
 			}
 
-			It("reset streams Other than the control stream and the QPACK streams", func() {
+			It("reset streams other than the control stream and the QPACK streams", func() {
 				buf := &bytes.Buffer{}
 				quicvarint.Write(buf, 1337)
 				str := mockquic.NewMockStream(mockCtrl)
@@ -665,9 +622,9 @@ var _ = Describe("Server", func() {
 			AfterEach(func() { testDone <- struct{}{} })
 
 			It("cancels reading when client sends a body in GET request", func() {
-				handlerCalled := make(chan struct{})
+				var handlerCalled bool
 				s.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					close(handlerCalled)
+					handlerCalled = true
 				})
 
 				requestData := encodeRequest(exampleGetRequest)
@@ -686,6 +643,27 @@ var _ = Describe("Server", func() {
 				Eventually(done).Should(BeClosed())
 				hfs := decodeHeader(responseBuf)
 				Expect(hfs).To(HaveKeyWithValue(":status", []string{"200"}))
+				Expect(handlerCalled).To(BeTrue())
+			})
+
+			It("doesn't close the stream if the stream was hijacked (via HTTPStream)", func() {
+				handlerCalled := make(chan struct{})
+				s.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer close(handlerCalled)
+					r.Body.(HTTPStreamer).HTTPStream()
+					str.Write([]byte("foobar"))
+				})
+
+				requestData := encodeRequest(exampleGetRequest)
+				buf := &bytes.Buffer{}
+				(&dataFrame{Length: 6}).Write(buf) // add a body
+				buf.Write([]byte("foobar"))
+				setRequest(append(requestData, buf.Bytes()...))
+				str.EXPECT().Context().Return(reqContext)
+				str.EXPECT().Write([]byte("foobar")).Return(6, nil)
+
+				s.handleConn(conn)
+				Eventually(handlerCalled).Should(BeClosed())
 			})
 
 			It("errors when the client sends a too large header frame", func() {
@@ -956,23 +934,23 @@ var _ = Describe("Server", func() {
 			ch = &tls.ClientHelloInfo{}
 		})
 
-		It("advertises draft by default", func() {
+		It("advertises v1 by default", func() {
 			tlsConf = ConfigureTLSConfig(tlsConf)
 			Expect(tlsConf.GetConfigForClient).NotTo(BeNil())
 
-			config, err := tlsConf.GetConfigForClient(ch)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(config.NextProtos).To(Equal([]string{nextProtoH3Draft29}))
-		})
-
-		It("advertises h3 for quic version 1", func() {
-			tlsConf = ConfigureTLSConfig(tlsConf)
-			Expect(tlsConf.GetConfigForClient).NotTo(BeNil())
-
-			ch.Conn = newMockConn(protocol.Version1)
 			config, err := tlsConf.GetConfigForClient(ch)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(config.NextProtos).To(Equal([]string{nextProtoH3}))
+		})
+
+		It("advertises h3-29 for draft-29", func() {
+			tlsConf = ConfigureTLSConfig(tlsConf)
+			Expect(tlsConf.GetConfigForClient).NotTo(BeNil())
+
+			ch.Conn = newMockConn(protocol.VersionDraft29)
+			config, err := tlsConf.GetConfigForClient(ch)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(config.NextProtos).To(Equal([]string{nextProtoH3Draft29}))
 		})
 	})
 
