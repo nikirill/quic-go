@@ -17,7 +17,7 @@ import (
 
 type packer interface {
 	PackCoalescedPacket() (*coalescedPacket, error)
-	PackPacket() (*packedPacket, error)
+	PackPacket(count protocol.ByteCount) (*packedPacket, error)
 	MaybePackProbePacket(protocol.EncryptionLevel) (*packedPacket, error)
 	MaybePackAckPacket(handshakeConfirmed bool) (*packedPacket, error)
 	PackConnectionClose(*qerr.TransportError) (*coalescedPacket, error)
@@ -38,6 +38,14 @@ type payload struct {
 	frames []ackhandler.Frame
 	ack    *wire.AckFrame
 	length protocol.ByteCount
+}
+
+func newPayload() *payload {
+	return &payload{
+		frames: make([]ackhandler.Frame, 0, 1),
+		ack:    nil,
+		length: protocol.ByteCount(0),
+	}
 }
 
 type packedPacket struct {
@@ -141,7 +149,6 @@ type frameSource interface {
 	HasData() bool
 	AppendStreamFrames([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
 	AppendControlFrames([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
-	AppendPingFrame([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
 }
 
 type ackFrameSource interface {
@@ -464,20 +471,40 @@ func (p *packetPacker) PackCoalescedPacket() (*coalescedPacket, error) {
 
 // PackPacket packs a packet in the application data packet number space.
 // It should be called after the handshake is confirmed.
-func (p *packetPacker) PackPacket() (*packedPacket, error) {
-	sealer, hdr, payload := p.maybeGetAppDataPacket(p.maxPacketSize, 0)
+func (p *packetPacker) PackPacket(fixedPacketSize protocol.ByteCount) (*packedPacket, error) {
+	var sealer sealer
+	var hdr *wire.ExtendedHeader
+	var payload *payload
+	if fixedPacketSize.NotZero() {
+		sealer, hdr, payload = p.maybeGetAppDataPacket(fixedPacketSize, 0)
+	} else {
+		sealer, hdr, payload = p.maybeGetAppDataPacket(p.maxPacketSize, 0)
+	}
 	if payload == nil {
-		return nil, nil
+		//return nil, nil
+		//If we do not have anything to send, we send a PING instead.
+		payload = newPayload()
+		// Adding two ping frames as   hack to avoid padding-length changes in p.appendPacket().
+		for j := 0; j < 2; j++ {
+			ping := &wire.PingFrame{}
+			payload.frames = append(payload.frames, ackhandler.Frame{Frame: ping, OnLost: func(wire.Frame) {}})
+			payload.length += ping.Length(p.version)
+		}
 	}
 	buffer := getPacketBuffer()
 	encLevel := protocol.Encryption1RTT
 	if hdr.IsLongHeader {
 		encLevel = protocol.Encryption0RTT
 	}
-	////Padding to the max packet size
-	//paddingToMaxLen := p.maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
-	//cont, err := p.appendPacket(buffer, hdr, payload, paddingToMaxLen, encLevel, sealer, false)
-	cont, err := p.appendPacket(buffer, hdr, payload, 0, encLevel, sealer, false)
+
+	var paddingLen protocol.ByteCount
+	if fixedPacketSize.NotZero() {
+		paddingLen = fixedPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
+	} else {
+		paddingLen = p.maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
+	}
+	cont, err := p.appendPacket(buffer, hdr, payload, paddingLen, encLevel, sealer, false)
+	//cont, err := p.appendPacket(buffer, hdr, payload, 0, encLevel, sealer, false)
 	if err != nil {
 		return nil, err
 	}
@@ -573,7 +600,6 @@ func (p *packetPacker) maybeGetAppDataPacket(maxPacketSize, currentSize protocol
 
 func (p *packetPacker) maybeGetAppDataPacketWithEncLevel(maxPayloadSize protocol.ByteCount, ackAllowed bool) *payload {
 	payload := p.composeNextPacket(maxPayloadSize, ackAllowed)
-
 	// check if we have anything to send
 	if len(payload.frames) == 0 {
 		if payload.ack == nil {
@@ -623,11 +649,7 @@ func (p *packetPacker) composeNextPacket(maxFrameSize protocol.ByteCount, ackAll
 		}
 	}
 
-	// Send PING if sending is scheduled but there is nothing to send.
 	if ack == nil && !hasData && !hasRetransmission {
-		//var lengthAdded protocol.ByteCount
-		//payload.frames, lengthAdded = p.framer.AppendPingFrame(payload.frames, maxFrameSize-payload.length)
-		//payload.length += lengthAdded
 		return payload
 	}
 
