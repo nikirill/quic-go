@@ -121,5 +121,6 @@ func populateConfig(config *Config) *Config {
 		DisableVersionNegotiationPackets: config.DisableVersionNegotiationPackets,
 		Tracer:                           config.Tracer,
 		SendingRate:                      config.SendingRate,
+		PacketSize:                       config.PacketSize,
 	}
 }

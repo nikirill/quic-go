@@ -18,8 +18,6 @@ type framer interface {
 	AddActiveStream(protocol.StreamID)
 	AppendStreamFrames([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
 
-	AppendPingFrame([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
-
 	Handle0RTTRejection() error
 }
 
@@ -80,19 +78,6 @@ func (f *framerI) AppendControlFrames(frames []ackhandler.Frame, maxLen protocol
 		frames = append(frames, ackhandler.Frame{Frame: frame})
 		length += frameLen
 		f.controlFrames = f.controlFrames[:len(f.controlFrames)-1]
-	}
-	f.controlFrameMutex.Unlock()
-	return frames, length
-}
-
-func (f *framerI) AppendPingFrame(frames []ackhandler.Frame, maxLen protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount) {
-	var length protocol.ByteCount
-	f.controlFrameMutex.Lock()
-	frame := &wire.PingFrame{}
-	frameLen := frame.Length(f.version)
-	if length+frameLen < maxLen {
-		frames = append(frames, ackhandler.Frame{Frame: frame})
-		length += frameLen
 	}
 	f.controlFrameMutex.Unlock()
 	return frames, length

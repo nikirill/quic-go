@@ -570,7 +570,7 @@ func (s *connection) run() error {
 	)
 
 	// The constant-rate sending period.
-	ticker := time.NewTicker(s.config.SendingRate)
+	constantTimeTicker := time.NewTicker(s.config.SendingRate)
 runLoop:
 	for {
 		// Close immediately if requested
@@ -605,7 +605,7 @@ runLoop:
 			select {
 			case closeErr = <-s.closeChan:
 				break runLoop
-			case <-ticker.C:
+			case <-constantTimeTicker.C:
 				//	Ticker defines when to send the next packet.
 			case <-s.timer.Chan():
 				s.timer.SetRead()
@@ -653,7 +653,7 @@ runLoop:
 							break receiveLoop
 						}
 					}
-					// If the handshake is complete, we do constant rate.
+					// If the handshake is complete, we do constant rate
 					continue runLoop
 				}
 				// Only reset the timers if this packet was actually processed.
@@ -718,7 +718,7 @@ runLoop:
 	s.cryptoStreamHandler.Close()
 	s.sendQueue.Close()
 	s.timer.Stop()
-	ticker.Stop()
+	constantTimeTicker.Stop()
 	return closeErr.err
 }
 
@@ -1725,7 +1725,6 @@ func (s *connection) sendPackets() error {
 }
 
 func (s *connection) maybeSendAckOnlyPacket() error {
-	fmt.Println("maybeSendAckOnlyPacket", time.Now())
 	packet, err := s.packer.MaybePackAckPacket(s.handshakeConfirmed)
 	if err != nil {
 		return err
@@ -1811,7 +1810,7 @@ func (s *connection) sendPacket() (bool, error) {
 		s.sendPackedPacket(packet, now)
 		return true, nil
 	}
-	packet, err := s.packer.PackPacket()
+	packet, err := s.packer.PackPacket(protocol.ByteCount(s.config.PacketSize))
 	if err != nil || packet == nil {
 		return false, err
 	}
