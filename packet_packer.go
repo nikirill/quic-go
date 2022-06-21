@@ -476,10 +476,9 @@ func (p *packetPacker) PackPacket(fixedPacketSize protocol.ByteCount) (*packedPa
 	var hdr *wire.ExtendedHeader
 	var payload *payload
 	if fixedPacketSize.NotZero() {
-		sealer, hdr, payload = p.maybeGetAppDataPacket(fixedPacketSize, 0)
-	} else {
-		sealer, hdr, payload = p.maybeGetAppDataPacket(p.maxPacketSize, 0)
+		p.maxPacketSize = fixedPacketSize
 	}
+	sealer, hdr, payload = p.maybeGetAppDataPacket(p.maxPacketSize, 0)
 	if payload == nil {
 		//return nil, nil
 		//If we do not have anything to send, we send a PING instead.
@@ -499,10 +498,9 @@ func (p *packetPacker) PackPacket(fixedPacketSize protocol.ByteCount) (*packedPa
 
 	var paddingLen protocol.ByteCount
 	if fixedPacketSize.NotZero() {
-		paddingLen = fixedPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
-	} else {
-		paddingLen = p.maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
+		p.maxPacketSize = fixedPacketSize
 	}
+	paddingLen = p.maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
 	cont, err := p.appendPacket(buffer, hdr, payload, paddingLen, encLevel, sealer, false)
 	//cont, err := p.appendPacket(buffer, hdr, payload, 0, encLevel, sealer, false)
 	if err != nil {
