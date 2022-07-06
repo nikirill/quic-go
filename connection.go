@@ -570,7 +570,7 @@ func (s *connection) run() error {
 	)
 
 	// The constant-rate sending period.
-	constantTimeTicker := time.NewTicker(s.config.SendingRate)
+	constantRateTicker := time.NewTicker(s.config.SendingRate)
 runLoop:
 	for {
 		// Close immediately if requested
@@ -605,7 +605,7 @@ runLoop:
 			select {
 			case closeErr = <-s.closeChan:
 				break runLoop
-			case <-constantTimeTicker.C:
+			case <-constantRateTicker.C:
 				//	Ticker defines when to send the next packet.
 			case <-s.timer.Chan():
 				s.timer.SetRead()
@@ -718,7 +718,7 @@ runLoop:
 	s.cryptoStreamHandler.Close()
 	s.sendQueue.Close()
 	s.timer.Stop()
-	constantTimeTicker.Stop()
+	constantRateTicker.Stop()
 	return closeErr.err
 }
 
@@ -1810,6 +1810,7 @@ func (s *connection) sendPacket() (bool, error) {
 		s.sendPackedPacket(packet, now)
 		return true, nil
 	}
+
 	packet, err := s.packer.PackPacket(protocol.ByteCount(s.config.PacketSize))
 	if err != nil || packet == nil {
 		return false, err

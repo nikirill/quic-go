@@ -176,6 +176,10 @@ type packetPacker struct {
 
 	maxPacketSize          protocol.ByteCount
 	numNonAckElicitingAcks int
+
+	// appDataStarted is used on the server to determine when to start constant-rate sending.
+	// It is incremented when the first application-data datagram appears in the sending queue.
+	appDataStarted int
 }
 
 var _ packer = &packetPacker{}
@@ -475,20 +479,32 @@ func (p *packetPacker) PackPacket(fixedPacketSize protocol.ByteCount) (*packedPa
 	var sealer sealer
 	var hdr *wire.ExtendedHeader
 	var payload *payload
+	maxPacketSize := p.maxPacketSize
 	if fixedPacketSize.NotZero() {
-		p.maxPacketSize = fixedPacketSize
+		maxPacketSize = fixedPacketSize
 	}
-	sealer, hdr, payload = p.maybeGetAppDataPacket(p.maxPacketSize, 0)
+	if p.appDataStarted < 2 && !p.framer.HasData() {
+		return nil, nil
+	}
+	sealer, hdr, payload = p.maybeGetAppDataPacket(maxPacketSize, 0)
 	if payload == nil {
 		//return nil, nil
+		//packet, err := p.PackMTUProbePacket(s.mtuDiscoverer.GetPing())
+		//return packet, err
 		//If we do not have anything to send, we send a PING instead.
 		payload = newPayload()
-		// Adding two ping frames as   hack to avoid padding-length changes in p.appendPacket().
+		// Adding two ping frames as a hack to avoid padding-length changes in p.appendPacket().
 		for j := 0; j < 2; j++ {
 			ping := &wire.PingFrame{}
 			payload.frames = append(payload.frames, ackhandler.Frame{Frame: ping, OnLost: func(wire.Frame) {}})
 			payload.length += ping.Length(p.version)
 		}
+	}
+	// Marking that the endpoint has started sending application data hence
+	// constant-rate transmission must be ensured.
+	// TODO: An ugly hack with incrementing to avoid triggering constant-rate sending on HandshakeDone packet
+	if p.appDataStarted < 2 {
+		p.appDataStarted += 1
 	}
 	buffer := getPacketBuffer()
 	encLevel := protocol.Encryption1RTT
@@ -497,10 +513,7 @@ func (p *packetPacker) PackPacket(fixedPacketSize protocol.ByteCount) (*packedPa
 	}
 
 	var paddingLen protocol.ByteCount
-	if fixedPacketSize.NotZero() {
-		p.maxPacketSize = fixedPacketSize
-	}
-	paddingLen = p.maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
+	paddingLen = maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
 	cont, err := p.appendPacket(buffer, hdr, payload, paddingLen, encLevel, sealer, false)
 	//cont, err := p.appendPacket(buffer, hdr, payload, 0, encLevel, sealer, false)
 	if err != nil {
