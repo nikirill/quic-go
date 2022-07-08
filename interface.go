@@ -301,7 +301,7 @@ type Config struct {
 
 	// Settings for metadata-private communication.
 	// When constant-rate sending is enabled, the rate is fixed to the value below.
-	SendingRate time.Duration
+	SendingRate []time.Duration
 	// If PacketSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
 	PacketSize int
 }

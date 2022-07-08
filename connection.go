@@ -570,7 +570,8 @@ func (s *connection) run() error {
 	)
 
 	// The constant-rate sending period.
-	constantRateTicker := time.NewTicker(s.config.SendingRate)
+	constantRateTicker := time.NewTicker(s.config.SendingRate[0])
+	tickerCounter := 0
 runLoop:
 	for {
 		// Close immediately if requested
@@ -606,6 +607,11 @@ runLoop:
 			case closeErr = <-s.closeChan:
 				break runLoop
 			case <-constantRateTicker.C:
+				// Keep using the last value of SendingRate if there are no more values left.
+				if tickerCounter != len(s.config.SendingRate)-1 {
+					tickerCounter++
+				}
+				constantRateTicker.Reset(s.config.SendingRate[tickerCounter])
 				//	Ticker defines when to send the next packet.
 			case <-s.timer.Chan():
 				s.timer.SetRead()
