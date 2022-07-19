@@ -194,6 +194,11 @@ type Connection interface {
 	SendMessage([]byte) error
 	// ReceiveMessage gets a message received in a datagram, as specified in RFC 9221.
 	ReceiveMessage() ([]byte, error)
+
+	// StartTrafficPatternHiding signals the connection to starts sending data at a constant rate.
+	StartTrafficPatternHiding(int)
+	// StopTrafficPatternHiding signals the connection to return to the normal sending behavior.
+	StopTrafficPatternHiding()
 }
 
 // An EarlyConnection is a connection that is handshaking.
@@ -299,9 +304,6 @@ type Config struct {
 	EnableDatagrams bool
 	Tracer          logging.Tracer
 
-	// Settings for metadata-private communication.
-	// When constant-rate sending is enabled, the rate is fixed to the value below.
-	SendingRate time.Duration
 	// If PacketSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
 	PacketSize int
 }

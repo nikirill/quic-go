@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"reflect"
 	"sync"
@@ -130,6 +131,15 @@ func (e *errCloseForRecreating) Error() string {
 var connTracingID uint64        // to be accessed atomically
 func nextConnTracingID() uint64 { return atomic.AddUint64(&connTracingID, 1) }
 
+// Manages traffic in metadata-private communication.
+type trafficPatternHiding struct {
+	Ongoing  bool
+	Starting chan int
+	Stopping chan struct{}
+	Timer    *time.Timer
+	Rate     time.Duration
+}
+
 // A Connection is a QUIC connection
 type connection struct {
 	// Destination connection ID used during the handshake.
@@ -220,6 +230,9 @@ type connection struct {
 	logID  string
 	tracer logging.ConnectionTracer
 	logger utils.Logger
+
+	////
+	patternHiding *trafficPatternHiding
 }
 
 var (
@@ -260,6 +273,15 @@ var newConnection = func(
 		logger:                logger,
 		version:               v,
 	}
+	////
+	s.patternHiding = &trafficPatternHiding{
+		Ongoing:  false,
+		Starting: make(chan int, 1),
+		Stopping: make(chan struct{}),
+		Timer:    time.NewTimer(time.Duration(math.MaxInt64)),
+		Rate:     time.Duration(math.MaxInt64),
+	}
+	////
 	if origDestConnID != nil {
 		s.logID = origDestConnID.String()
 	} else {
@@ -392,6 +414,15 @@ var newClientConnection = func(
 		versionNegotiated:     hasNegotiatedVersion,
 		version:               v,
 	}
+	////
+	s.patternHiding = &trafficPatternHiding{
+		Ongoing:  false,
+		Starting: make(chan int, 1),
+		Stopping: make(chan struct{}),
+		Timer:    time.NewTimer(time.Duration(math.MaxInt64)),
+		Rate:     time.Duration(math.MaxInt64),
+	}
+	////
 	s.connIDManager = newConnIDManager(
 		destConnID,
 		func(token protocol.StatelessResetToken) { runner.AddResetToken(token, s) },
@@ -569,8 +600,6 @@ func (s *connection) run() error {
 		sendQueueAvailable <-chan struct{}
 	)
 
-	// The constant-rate sending period.
-	constantRateTicker := time.NewTicker(s.config.SendingRate)
 runLoop:
 	for {
 		// Close immediately if requested
@@ -605,23 +634,31 @@ runLoop:
 			select {
 			case closeErr = <-s.closeChan:
 				break runLoop
-			case <-constantRateTicker.C:
-				//	Ticker defines when to send the next packet.
+			case rate := <-s.patternHiding.Starting:
+				s.patternHiding.Ongoing = true
+				s.patternHiding.Rate = time.Duration(rate) * time.Millisecond
+				s.patternHiding.Timer.Reset(s.patternHiding.Rate)
+			case <-s.patternHiding.Timer.C:
+				//	Timer defines when to send the next packet.
+				s.patternHiding.Timer.Reset(s.patternHiding.Rate)
+			case <-s.patternHiding.Stopping:
+				s.patternHiding.Ongoing = false
+				s.patternHiding.Timer.Reset(time.Duration(math.MaxInt64))
 			case <-s.timer.Chan():
 				s.timer.SetRead()
-				if s.handshakeComplete {
+				if s.handshakeComplete && s.patternHiding.Ongoing {
 					continue runLoop
 				}
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-s.sendingScheduled:
-				if s.handshakeComplete {
+				if s.handshakeComplete && s.patternHiding.Ongoing {
 					continue runLoop
 				}
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-sendQueueAvailable:
-				if s.handshakeComplete {
+				if s.handshakeComplete && s.patternHiding.Ongoing {
 					continue runLoop
 				}
 			case firstPacket := <-s.receivedPackets:
@@ -653,7 +690,8 @@ runLoop:
 							break receiveLoop
 						}
 					}
-					// If the handshake is complete, we do constant rate
+				}
+				if s.handshakeComplete && s.patternHiding.Ongoing {
 					continue runLoop
 				}
 				// Only reset the timers if this packet was actually processed.
@@ -676,13 +714,13 @@ runLoop:
 			}
 		}
 
-		//if keepAliveTime := s.nextKeepAliveTime(); !keepAliveTime.IsZero() && !now.Before(keepAliveTime) {
-		//	// send a PING frame since there is no activity in the connection
-		//	s.logger.Debugf("Sending a keep-alive PING to keep the connection alive.")
-		//	s.framer.QueueControlFrame(&wire.PingFrame{})
-		//	s.keepAlivePingSent = true
-		//} else if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
-		if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
+		if keepAliveTime := s.nextKeepAliveTime(); !keepAliveTime.IsZero() && !now.Before(keepAliveTime) {
+			// send a PING frame since there is no activity in the connection
+			s.logger.Debugf("Sending a keep-alive PING to keep the connection alive.")
+			s.framer.QueueControlFrame(&wire.PingFrame{})
+			s.keepAlivePingSent = true
+		} else if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
+			//if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
 			s.destroyImpl(qerr.ErrHandshakeTimeout)
 			continue
 		} else {
@@ -718,7 +756,7 @@ runLoop:
 	s.cryptoStreamHandler.Close()
 	s.sendQueue.Close()
 	s.timer.Stop()
-	constantRateTicker.Stop()
+	s.patternHiding.Timer.Stop()
 	return closeErr.err
 }
 
@@ -2027,4 +2065,12 @@ func (s *connection) NextConnection() Connection {
 	<-s.HandshakeComplete().Done()
 	s.streamsMap.UseResetMaps()
 	return s
+}
+
+func (s *connection) StartTrafficPatternHiding(rate int) {
+	s.patternHiding.Starting <- rate
+}
+
+func (s *connection) StopTrafficPatternHiding() {
+	s.patternHiding.Stopping <- struct{}{}
 }
