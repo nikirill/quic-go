@@ -145,7 +145,7 @@ type Shape struct {
 	Rate time.Duration
 	// If PacketSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
 	// Otherwise, all packets are padded to max.
-	PacketSize int
+	PacketSize protocol.ByteCount
 }
 
 // A Connection is a QUIC connection
@@ -1858,7 +1858,7 @@ func (s *connection) sendPacket() (bool, error) {
 		return true, nil
 	}
 
-	packet, err := s.packer.PackPacket(protocol.ByteCount(s.trafficShaping.PacketSize))
+	packet, err := s.packer.PackPacket(s.trafficShaping.Ongoing, s.trafficShaping.PacketSize)
 	if err != nil || packet == nil {
 		return false, err
 	}
@@ -2077,7 +2077,10 @@ func (s *connection) NextConnection() Connection {
 }
 
 func (s *connection) StartTrafficPatternHiding(rate, size int) {
-	s.trafficShaping.Starting <- &Shape{Rate: time.Duration(rate) * time.Millisecond, PacketSize: size}
+	s.trafficShaping.Starting <- &Shape{
+		Rate:       time.Duration(rate) * time.Millisecond,
+		PacketSize: protocol.ByteCount(size),
+	}
 }
 
 func (s *connection) StopTrafficPatternHiding() {
