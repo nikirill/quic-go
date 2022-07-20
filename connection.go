@@ -132,12 +132,20 @@ var connTracingID uint64        // to be accessed atomically
 func nextConnTracingID() uint64 { return atomic.AddUint64(&connTracingID, 1) }
 
 // Manages traffic in metadata-private communication.
-type trafficPatternHiding struct {
+type trafficShaping struct {
 	Ongoing  bool
-	Starting chan int
+	Starting chan *Shape
 	Stopping chan struct{}
 	Timer    *time.Timer
-	Rate     time.Duration
+	Shape
+}
+
+type Shape struct {
+	// Frequency of packets sent by the end point
+	Rate time.Duration
+	// If PacketSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
+	// Otherwise, all packets are padded to max.
+	PacketSize int
 }
 
 // A Connection is a QUIC connection
@@ -232,7 +240,7 @@ type connection struct {
 	logger utils.Logger
 
 	////
-	patternHiding *trafficPatternHiding
+	trafficShaping *trafficShaping
 }
 
 var (
@@ -274,12 +282,12 @@ var newConnection = func(
 		version:               v,
 	}
 	////
-	s.patternHiding = &trafficPatternHiding{
+	s.trafficShaping = &trafficShaping{
 		Ongoing:  false,
-		Starting: make(chan int, 1),
+		Starting: make(chan *Shape),
 		Stopping: make(chan struct{}),
 		Timer:    time.NewTimer(time.Duration(math.MaxInt64)),
-		Rate:     time.Duration(math.MaxInt64),
+		Shape:    Shape{Rate: time.Duration(math.MaxInt64), PacketSize: 0},
 	}
 	////
 	if origDestConnID != nil {
@@ -415,12 +423,12 @@ var newClientConnection = func(
 		version:               v,
 	}
 	////
-	s.patternHiding = &trafficPatternHiding{
+	s.trafficShaping = &trafficShaping{
 		Ongoing:  false,
-		Starting: make(chan int, 1),
+		Starting: make(chan *Shape),
 		Stopping: make(chan struct{}),
 		Timer:    time.NewTimer(time.Duration(math.MaxInt64)),
-		Rate:     time.Duration(math.MaxInt64),
+		Shape:    Shape{Rate: time.Duration(math.MaxInt64), PacketSize: 0},
 	}
 	////
 	s.connIDManager = newConnIDManager(
@@ -634,31 +642,32 @@ runLoop:
 			select {
 			case closeErr = <-s.closeChan:
 				break runLoop
-			case rate := <-s.patternHiding.Starting:
-				s.patternHiding.Ongoing = true
-				s.patternHiding.Rate = time.Duration(rate) * time.Millisecond
-				s.patternHiding.Timer.Reset(s.patternHiding.Rate)
-			case <-s.patternHiding.Timer.C:
+			case shape := <-s.trafficShaping.Starting:
+				s.trafficShaping.Ongoing = true
+				s.trafficShaping.Rate = shape.Rate
+				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
+				s.trafficShaping.PacketSize = shape.PacketSize
+			case <-s.trafficShaping.Timer.C:
 				//	Timer defines when to send the next packet.
-				s.patternHiding.Timer.Reset(s.patternHiding.Rate)
-			case <-s.patternHiding.Stopping:
-				s.patternHiding.Ongoing = false
-				s.patternHiding.Timer.Reset(time.Duration(math.MaxInt64))
+				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
+			case <-s.trafficShaping.Stopping:
+				s.trafficShaping.Ongoing = false
+				s.trafficShaping.Timer.Reset(time.Duration(math.MaxInt64))
 			case <-s.timer.Chan():
 				s.timer.SetRead()
-				if s.handshakeComplete && s.patternHiding.Ongoing {
+				if s.handshakeComplete && s.trafficShaping.Ongoing {
 					continue runLoop
 				}
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-s.sendingScheduled:
-				if s.handshakeComplete && s.patternHiding.Ongoing {
+				if s.handshakeComplete && s.trafficShaping.Ongoing {
 					continue runLoop
 				}
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-sendQueueAvailable:
-				if s.handshakeComplete && s.patternHiding.Ongoing {
+				if s.handshakeComplete && s.trafficShaping.Ongoing {
 					continue runLoop
 				}
 			case firstPacket := <-s.receivedPackets:
@@ -691,7 +700,7 @@ runLoop:
 						}
 					}
 				}
-				if s.handshakeComplete && s.patternHiding.Ongoing {
+				if s.handshakeComplete && s.trafficShaping.Ongoing {
 					continue runLoop
 				}
 				// Only reset the timers if this packet was actually processed.
@@ -756,7 +765,7 @@ runLoop:
 	s.cryptoStreamHandler.Close()
 	s.sendQueue.Close()
 	s.timer.Stop()
-	s.patternHiding.Timer.Stop()
+	s.trafficShaping.Timer.Stop()
 	return closeErr.err
 }
 
@@ -1849,7 +1858,7 @@ func (s *connection) sendPacket() (bool, error) {
 		return true, nil
 	}
 
-	packet, err := s.packer.PackPacket(protocol.ByteCount(s.config.PacketSize))
+	packet, err := s.packer.PackPacket(protocol.ByteCount(s.trafficShaping.PacketSize))
 	if err != nil || packet == nil {
 		return false, err
 	}
@@ -2067,10 +2076,10 @@ func (s *connection) NextConnection() Connection {
 	return s
 }
 
-func (s *connection) StartTrafficPatternHiding(rate int) {
-	s.patternHiding.Starting <- rate
+func (s *connection) StartTrafficPatternHiding(rate, size int) {
+	s.trafficShaping.Starting <- &Shape{Rate: time.Duration(rate) * time.Millisecond, PacketSize: size}
 }
 
 func (s *connection) StopTrafficPatternHiding() {
-	s.patternHiding.Stopping <- struct{}{}
+	s.trafficShaping.Stopping <- struct{}{}
 }

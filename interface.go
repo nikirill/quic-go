@@ -196,7 +196,7 @@ type Connection interface {
 	ReceiveMessage() ([]byte, error)
 
 	// StartTrafficPatternHiding signals the connection to starts sending data at a constant rate.
-	StartTrafficPatternHiding(int)
+	StartTrafficPatternHiding(int, int)
 	// StopTrafficPatternHiding signals the connection to return to the normal sending behavior.
 	StopTrafficPatternHiding()
 }
@@ -303,9 +303,6 @@ type Config struct {
 	// Datagrams will only be available when both peers enable datagram support.
 	EnableDatagrams bool
 	Tracer          logging.Tracer
-
-	// If PacketSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
-	PacketSize int
 }
 
 // ConnectionState records basic details about a QUIC connection

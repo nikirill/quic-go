@@ -120,6 +120,5 @@ func populateConfig(config *Config) *Config {
 		DisablePathMTUDiscovery:          config.DisablePathMTUDiscovery,
 		DisableVersionNegotiationPackets: config.DisableVersionNegotiationPackets,
 		Tracer:                           config.Tracer,
-		PacketSize:                       config.PacketSize,
 	}
 }

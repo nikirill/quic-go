@@ -500,12 +500,6 @@ func (p *packetPacker) PackPacket(fixedPacketSize protocol.ByteCount) (*packedPa
 			payload.length += ping.Length(p.version)
 		}
 	}
-	// Marking that the endpoint has started sending application data hence
-	// constant-rate transmission must be ensured.
-	// TODO: An ugly hack with incrementing to avoid triggering constant-rate sending on HandshakeDone packet
-	if p.appDataStarted < 2 {
-		p.appDataStarted += 1
-	}
 	buffer := getPacketBuffer()
 	encLevel := protocol.Encryption1RTT
 	if hdr.IsLongHeader {
