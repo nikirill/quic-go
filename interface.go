@@ -196,9 +196,9 @@ type Connection interface {
 	ReceiveMessage() ([]byte, error)
 
 	// StartTrafficPatternHiding signals the connection to starts sending data at a constant rate.
-	StartTrafficPatternHiding(int, int)
+	StartTrafficShaping(int, int)
 	// StopTrafficPatternHiding signals the connection to return to the normal sending behavior.
-	StopTrafficPatternHiding()
+	StopTrafficShaping()
 }
 
 // An EarlyConnection is a connection that is handshaking.

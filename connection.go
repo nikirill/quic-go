@@ -642,11 +642,11 @@ runLoop:
 			select {
 			case closeErr = <-s.closeChan:
 				break runLoop
-			case shape := <-s.trafficShaping.Starting:
+			case properties := <-s.trafficShaping.Starting:
 				s.trafficShaping.Ongoing = true
-				s.trafficShaping.Rate = shape.Rate
+				s.trafficShaping.Rate = properties.Rate
 				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
-				s.trafficShaping.PacketSize = shape.PacketSize
+				s.trafficShaping.PacketSize = properties.PacketSize
 			case <-s.trafficShaping.Timer.C:
 				//	Timer defines when to send the next packet.
 				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
@@ -2076,13 +2076,13 @@ func (s *connection) NextConnection() Connection {
 	return s
 }
 
-func (s *connection) StartTrafficPatternHiding(rate, size int) {
+func (s *connection) StartTrafficShaping(rate, size int) {
 	s.trafficShaping.Starting <- &Shape{
 		Rate:       time.Duration(rate) * time.Millisecond,
 		PacketSize: protocol.ByteCount(size),
 	}
 }
 
-func (s *connection) StopTrafficPatternHiding() {
+func (s *connection) StopTrafficShaping() {
 	s.trafficShaping.Stopping <- struct{}{}
 }
