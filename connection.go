@@ -645,8 +645,11 @@ runLoop:
 			case properties := <-s.trafficShaping.Starting:
 				s.trafficShaping.Ongoing = true
 				s.trafficShaping.Rate = properties.Rate
-				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
 				s.trafficShaping.PacketSize = properties.PacketSize
+				// We give time for the initial data packet to be packed
+				// so that we do not send an empty one instead.
+				s.trafficShaping.Timer.Reset(time.Millisecond)
+				continue runLoop
 			case <-s.trafficShaping.Timer.C:
 				//	Timer defines when to send the next packet.
 				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
