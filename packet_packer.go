@@ -483,18 +483,7 @@ func (p *packetPacker) PackPacket(shaping bool, fixedPacketSize protocol.ByteCou
 
 	sealer, hdr, payload = p.maybeGetAppDataPacket(maxPacketSize, 0)
 	if payload == nil {
-		if !shaping {
-			return nil, nil
-		} else {
-			//If we do not have anything to send, we send a PING instead.
-			payload = newPayload()
-			// Adding two ping frames as a hack to avoid padding-length changes in p.appendPacket().
-			for j := 0; j < 2; j++ {
-				ping := &wire.PingFrame{}
-				payload.frames = append(payload.frames, ackhandler.Frame{Frame: ping, OnLost: func(wire.Frame) {}})
-				payload.length += ping.Length(p.version)
-			}
-		}
+		return nil, nil
 	}
 	buffer := getPacketBuffer()
 	encLevel := protocol.Encryption1RTT

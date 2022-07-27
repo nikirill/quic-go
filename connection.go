@@ -133,7 +133,7 @@ func nextConnTracingID() uint64 { return atomic.AddUint64(&connTracingID, 1) }
 
 // Manages traffic in metadata-private communication.
 type trafficShaping struct {
-	Ongoing  bool
+	Active   bool
 	Starting chan *Shape
 	Stopping chan struct{}
 	Timer    *time.Timer
@@ -146,6 +146,14 @@ type Shape struct {
 	// If PacketSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
 	// Otherwise, all packets are padded to max.
 	PacketSize protocol.ByteCount
+}
+
+func (ts *trafficShaping) GetStatusAndSize() (bool, protocol.ByteCount) {
+	return ts.Active, ts.Shape.PacketSize
+}
+
+func (ts *trafficShaping) PacketSizeFixed() bool {
+	return ts.Shape.PacketSize.NotZero()
 }
 
 // A Connection is a QUIC connection
@@ -283,7 +291,7 @@ var newConnection = func(
 	}
 	////
 	s.trafficShaping = &trafficShaping{
-		Ongoing:  false,
+		Active:   false,
 		Starting: make(chan *Shape),
 		Stopping: make(chan struct{}),
 		Timer:    time.NewTimer(time.Duration(math.MaxInt64)),
@@ -424,7 +432,7 @@ var newClientConnection = func(
 	}
 	////
 	s.trafficShaping = &trafficShaping{
-		Ongoing:  false,
+		Active:   false,
 		Starting: make(chan *Shape),
 		Stopping: make(chan struct{}),
 		Timer:    time.NewTimer(time.Duration(math.MaxInt64)),
@@ -643,7 +651,7 @@ runLoop:
 			case closeErr = <-s.closeChan:
 				break runLoop
 			case properties := <-s.trafficShaping.Starting:
-				s.trafficShaping.Ongoing = true
+				s.trafficShaping.Active = true
 				s.trafficShaping.Rate = properties.Rate
 				s.trafficShaping.PacketSize = properties.PacketSize
 				// We give time for the initial data packet to be packed
@@ -654,23 +662,23 @@ runLoop:
 				//	Timer defines when to send the next packet.
 				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
 			case <-s.trafficShaping.Stopping:
-				s.trafficShaping.Ongoing = false
+				s.trafficShaping.Active = false
 				s.trafficShaping.Timer.Reset(time.Duration(math.MaxInt64))
 			case <-s.timer.Chan():
 				s.timer.SetRead()
-				if s.handshakeComplete && s.trafficShaping.Ongoing {
+				if s.handshakeComplete && s.trafficShaping.Active {
 					continue runLoop
 				}
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-s.sendingScheduled:
-				if s.handshakeComplete && s.trafficShaping.Ongoing {
+				if s.handshakeComplete && s.trafficShaping.Active {
 					continue runLoop
 				}
 				// We do all the interesting stuff after the switch statement, so
 				// nothing to see here.
 			case <-sendQueueAvailable:
-				if s.handshakeComplete && s.trafficShaping.Ongoing {
+				if s.handshakeComplete && s.trafficShaping.Active {
 					continue runLoop
 				}
 			case firstPacket := <-s.receivedPackets:
@@ -703,7 +711,7 @@ runLoop:
 						}
 					}
 				}
-				if s.handshakeComplete && s.trafficShaping.Ongoing {
+				if s.handshakeComplete && s.trafficShaping.Active {
 					continue runLoop
 				}
 				// Only reset the timers if this packet was actually processed.
@@ -732,7 +740,6 @@ runLoop:
 			s.framer.QueueControlFrame(&wire.PingFrame{})
 			s.keepAlivePingSent = true
 		} else if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
-			//if !s.handshakeComplete && now.Sub(s.creationTime) >= s.config.handshakeTimeout() {
 			s.destroyImpl(qerr.ErrHandshakeTimeout)
 			continue
 		} else {
@@ -1852,18 +1859,30 @@ func (s *connection) sendPacket() (bool, error) {
 		s.sendQueue.Send(packet.buffer)
 		return true, nil
 	}
-	if !s.config.DisablePathMTUDiscovery && s.mtuDiscoverer.ShouldSendProbe(now) {
-		packet, err := s.packer.PackMTUProbePacket(s.mtuDiscoverer.GetPing())
+	//if !s.config.DisablePathMTUDiscovery && s.mtuDiscoverer.ShouldSendProbe(now) {
+	//	packet, err := s.packer.PackMTUProbePacket(s.mtuDiscoverer.GetPing())
+	//	if err != nil {
+	//		return false, err
+	//	}
+	//	s.sendPackedPacket(packet, now)
+	//	return true, nil
+	//}
+
+	packet, err := s.packer.PackPacket(s.trafficShaping.GetStatusAndSize())
+	if err != nil || (packet == nil && !s.trafficShaping.Active) {
+		return false, err
+	}
+	// If we were scheduled to some and traffic shaping is on but we have nothing to send,
+	// we send an MTU probe packet instead.
+	if packet == nil {
+		ping, size := s.mtuDiscoverer.GetPing()
+		if s.trafficShaping.PacketSizeFixed() {
+			size = s.trafficShaping.PacketSize
+		}
+		packet, err = s.packer.PackMTUProbePacket(ping, size)
 		if err != nil {
 			return false, err
 		}
-		s.sendPackedPacket(packet, now)
-		return true, nil
-	}
-
-	packet, err := s.packer.PackPacket(s.trafficShaping.Ongoing, s.trafficShaping.PacketSize)
-	if err != nil || packet == nil {
-		return false, err
 	}
 	s.sendPackedPacket(packet, now)
 	return true, nil
