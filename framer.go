@@ -98,7 +98,7 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 	f.mutex.Lock()
 	// pop STREAM frames, until less than MinStreamFrameSize bytes are left in the packet
 	numActiveStreams := len(f.streamQueue)
-	for i := 0; i < numActiveStreams; i++ {
+	for numActiveStreams > 0 {
 		if protocol.MinStreamFrameSize+length > maxLen {
 			break
 		}
@@ -132,6 +132,14 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 		frames = append(frames, *frame)
 		length += frame.Length(f.version)
 		lastFrame = frame
+		numActiveStreams--
+		// Makes sure that pack data frames into the same packet even if
+		// they are from the same stream. It addresses the use case when
+		// a data blob is split into two frames (a large one and a small one)
+		// and the small one has to be padded.
+		if numActiveStreams == 0 && len(f.streamQueue) > 0 {
+			numActiveStreams++
+		}
 	}
 	f.mutex.Unlock()
 	if lastFrame != nil {
@@ -142,6 +150,57 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 	}
 	return frames, length
 }
+
+//func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount) {
+//	var length protocol.ByteCount
+//	var lastFrame *ackhandler.Frame
+//	f.mutex.Lock()
+//	// pop STREAM frames, until less than MinStreamFrameSize bytes are left in the packet
+//	numActiveStreams := len(f.streamQueue)
+//	for i := 0; i < numActiveStreams; i++ {
+//		if protocol.MinStreamFrameSize+length > maxLen {
+//			break
+//		}
+//		id := f.streamQueue[0]
+//		f.streamQueue = f.streamQueue[1:]
+//		// This should never return an error. Better check it anyway.
+//		// The stream will only be in the streamQueue, if it enqueued itself there.
+//		str, err := f.streamGetter.GetOrOpenSendStream(id)
+//		// The stream can be nil if it completed after it said it had data.
+//		if str == nil || err != nil {
+//			delete(f.activeStreams, id)
+//			continue
+//		}
+//		remainingLen := maxLen - length
+//		// For the last STREAM frame, we'll remove the DataLen field later.
+//		// Therefore, we can pretend to have more bytes available when popping
+//		// the STREAM frame (which will always have the DataLen set).
+//		remainingLen += quicvarint.Len(uint64(remainingLen))
+//		frame, hasMoreData := str.popStreamFrame(remainingLen)
+//		if hasMoreData { // put the stream back in the queue (at the end)
+//			f.streamQueue = append(f.streamQueue, id)
+//		} else { // no more data to send. Stream is not active any more
+//			delete(f.activeStreams, id)
+//		}
+//		// The frame can be nil
+//		// * if the receiveStream was canceled after it said it had data
+//		// * the remaining size doesn't allow us to add another STREAM frame
+//		if frame == nil {
+//			continue
+//		}
+//		frames = append(frames, *frame)
+//		length += frame.Length(f.version)
+//		lastFrame = frame
+//	}
+//	f.mutex.Unlock()
+//	if lastFrame != nil {
+//		lastFrameLen := lastFrame.Length(f.version)
+//		// account for the smaller size of the last STREAM frame
+//		lastFrame.Frame.(*wire.StreamFrame).DataLenPresent = false
+//		length += lastFrame.Length(f.version) - lastFrameLen
+//	}
+//	return frames, length
+//}
 
 func (f *framerI) Handle0RTTRejection() error {
 	f.mutex.Lock()

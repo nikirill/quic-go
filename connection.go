@@ -1882,7 +1882,7 @@ func (s *connection) sendPacket() (bool, error) {
 			return false, err
 		}
 	}
-	// If we were scheduled to some and traffic shaping is on but we have nothing to send,
+	// If the endpoint is scheduled to send and the traffic shaping is on, but we have nothing to send,
 	// we send an MTU probe packet instead.
 	if packet == nil {
 		ping, size := s.mtuDiscoverer.GetPing()
