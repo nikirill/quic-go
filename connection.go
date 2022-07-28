@@ -1868,9 +1868,19 @@ func (s *connection) sendPacket() (bool, error) {
 	//	return true, nil
 	//}
 
-	packet, err := s.packer.PackPacket(s.trafficShaping.GetStatusAndSize())
-	if err != nil || (packet == nil && !s.trafficShaping.Active) {
-		return false, err
+	var packet *packedPacket
+	var err error
+	if s.trafficShaping.Active {
+		size := s.packer.GetMaxPacketSize()
+		if s.trafficShaping.PacketSizeFixed() {
+			size = s.trafficShaping.PacketSize
+		}
+		packet, err = s.packer.PackShapedPacket(size)
+	} else {
+		packet, err = s.packer.PackPacket()
+		if err != nil || packet == nil {
+			return false, err
+		}
 	}
 	// If we were scheduled to some and traffic shaping is on but we have nothing to send,
 	// we send an MTU probe packet instead.

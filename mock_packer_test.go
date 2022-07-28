@@ -177,3 +177,15 @@ func (mr *MockPackerMockRecorder) SetToken(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetToken", reflect.TypeOf((*MockPacker)(nil).SetToken), arg0)
 }
+
+func (m *MockPacker) PackShapedPacket(arg0 protocol.ByteCount) (*packedPacket, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PackPacket")
+	ret0, _ := ret[0].(*packedPacket)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+func (m *MockPacker) GetMaxPacketSize() protocol.ByteCount{
+	return protocol.ByteCount(0)
+}

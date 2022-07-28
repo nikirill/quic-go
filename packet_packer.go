@@ -17,7 +17,7 @@ import (
 
 type packer interface {
 	PackCoalescedPacket() (*coalescedPacket, error)
-	PackPacket(bool, protocol.ByteCount) (*packedPacket, error)
+	PackPacket() (*packedPacket, error)
 	MaybePackProbePacket(protocol.EncryptionLevel) (*packedPacket, error)
 	MaybePackAckPacket(handshakeConfirmed bool) (*packedPacket, error)
 	PackConnectionClose(*qerr.TransportError) (*coalescedPacket, error)
@@ -28,6 +28,9 @@ type packer interface {
 
 	HandleTransportParameters(*wire.TransportParameters)
 	SetToken([]byte)
+
+	PackShapedPacket(protocol.ByteCount) (*packedPacket, error)
+	GetMaxPacketSize() protocol.ByteCount
 }
 
 type sealer interface {
@@ -38,14 +41,6 @@ type payload struct {
 	frames []ackhandler.Frame
 	ack    *wire.AckFrame
 	length protocol.ByteCount
-}
-
-func newPayload() *payload {
-	return &payload{
-		frames: make([]ackhandler.Frame, 0, 1),
-		ack:    nil,
-		length: protocol.ByteCount(0),
-	}
 }
 
 type packedPacket struct {
@@ -471,17 +466,28 @@ func (p *packetPacker) PackCoalescedPacket() (*coalescedPacket, error) {
 
 // PackPacket packs a packet in the application data packet number space.
 // It should be called after the handshake is confirmed.
-func (p *packetPacker) PackPacket(shaping bool, fixedPacketSize protocol.ByteCount) (*packedPacket, error) {
-	var sealer sealer
-	var hdr *wire.ExtendedHeader
-	var payload *payload
-
-	maxPacketSize := p.maxPacketSize
-	if shaping && fixedPacketSize.NotZero() {
-		maxPacketSize = fixedPacketSize
+func (p *packetPacker) PackPacket() (*packedPacket, error) {
+	sealer, hdr, payload := p.maybeGetAppDataPacket(p.maxPacketSize, 0)
+	if payload == nil {
+		return nil, nil
 	}
+	buffer := getPacketBuffer()
+	encLevel := protocol.Encryption1RTT
+	if hdr.IsLongHeader {
+		encLevel = protocol.Encryption0RTT
+	}
+	cont, err := p.appendPacket(buffer, hdr, payload, 0, encLevel, sealer, false)
+	if err != nil {
+		return nil, err
+	}
+	return &packedPacket{
+		buffer:         buffer,
+		packetContents: cont,
+	}, nil
+}
 
-	sealer, hdr, payload = p.maybeGetAppDataPacket(maxPacketSize, 0)
+func (p *packetPacker) PackShapedPacket(maxPacketSize protocol.ByteCount) (*packedPacket, error) {
+	sealer, hdr, payload := p.maybeGetAppDataPacket(maxPacketSize, 0)
 	if payload == nil {
 		return nil, nil
 	}
@@ -491,12 +497,8 @@ func (p *packetPacker) PackPacket(shaping bool, fixedPacketSize protocol.ByteCou
 		encLevel = protocol.Encryption0RTT
 	}
 
-	paddingLen := protocol.ByteCount(0)
-	if shaping {
-		paddingLen = maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
-	}
+	paddingLen := maxPacketSize - payload.length - hdr.GetLength(p.version) - protocol.ByteCount(sealer.Overhead())
 	cont, err := p.appendPacket(buffer, hdr, payload, paddingLen, encLevel, sealer, false)
-	//cont, err := p.appendPacket(buffer, hdr, payload, 0, encLevel, sealer, false)
 	if err != nil {
 		return nil, err
 	}
@@ -913,4 +915,8 @@ func (p *packetPacker) HandleTransportParameters(params *wire.TransportParameter
 	if params.MaxUDPPayloadSize != 0 {
 		p.maxPacketSize = utils.MinByteCount(p.maxPacketSize, params.MaxUDPPayloadSize)
 	}
+}
+
+func (p *packetPacker) GetMaxPacketSize() protocol.ByteCount {
+	return p.maxPacketSize
 }
