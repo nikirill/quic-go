@@ -137,7 +137,7 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 		// they are from the same stream. It addresses the use case when
 		// a data blob is split into two frames (a large one and a small one)
 		// and the small one has to be padded.
-		if numActiveStreams == 0 && hasMoreData {
+		if numActiveStreams == 0 && hasMoreData && len(f.streamQueue) > 0 {
 			numActiveStreams++
 		}
 	}
