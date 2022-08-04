@@ -102,6 +102,9 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 		if protocol.MinStreamFrameSize+length > maxLen {
 			break
 		}
+		if len(f.streamQueue) == 0 {
+			break
+		}
 		id := f.streamQueue[0]
 		f.streamQueue = f.streamQueue[1:]
 		// This should never return an error. Better check it anyway.
