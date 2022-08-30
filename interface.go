@@ -195,10 +195,14 @@ type Connection interface {
 	// ReceiveMessage gets a message received in a datagram, as specified in RFC 9221.
 	ReceiveMessage() ([]byte, error)
 
-	// StartTrafficPatternHiding signals the connection to starts sending data at a constant rate.
+	// StartTrafficShaping signals the connection to starts sending data at a constant rate.
 	StartTrafficShaping(int, int)
-	// StopTrafficPatternHiding signals the connection to return to the normal sending behavior.
+	// StopTrafficShaping signals the connection to return to the normal sending behavior.
 	StopTrafficShaping()
+	// PauseSending signals the connection to halts all transmission.
+	PauseSending()
+	// FirePacket signals the connection to immediately transmit one packet without changing the shaping status
+	FirePacket()
 }
 
 // An EarlyConnection is a connection that is handshaking.
