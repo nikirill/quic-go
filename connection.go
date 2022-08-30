@@ -133,10 +133,11 @@ func nextConnTracingID() uint64 { return atomic.AddUint64(&connTracingID, 1) }
 
 // Manages traffic in metadata-private communication.
 type trafficShaping struct {
-	Active   bool
-	Starting chan *Shape
-	Stopping chan struct{}
-	Timer    *time.Timer
+	Active     bool
+	BeforeData bool
+	Starting   chan *Shape
+	Stopping   chan struct{}
+	Timer      *time.Timer
 	Shape
 }
 
@@ -291,11 +292,12 @@ var newConnection = func(
 	}
 	////
 	s.trafficShaping = &trafficShaping{
-		Active:   false,
-		Starting: make(chan *Shape),
-		Stopping: make(chan struct{}),
-		Timer:    time.NewTimer(time.Duration(math.MaxInt64)),
-		Shape:    Shape{Rate: time.Duration(math.MaxInt64), PacketSize: 0},
+		Active:     false,
+		BeforeData: true,
+		Starting:   make(chan *Shape),
+		Stopping:   make(chan struct{}),
+		Timer:      time.NewTimer(time.Duration(math.MaxInt64)),
+		Shape:      Shape{Rate: time.Duration(math.MaxInt64), PacketSize: 0},
 	}
 	////
 	if origDestConnID != nil {
@@ -432,11 +434,12 @@ var newClientConnection = func(
 	}
 	////
 	s.trafficShaping = &trafficShaping{
-		Active:   false,
-		Starting: make(chan *Shape),
-		Stopping: make(chan struct{}),
-		Timer:    time.NewTimer(time.Duration(math.MaxInt64)),
-		Shape:    Shape{Rate: time.Duration(math.MaxInt64), PacketSize: 0},
+		Active:     false,
+		BeforeData: false,
+		Starting:   make(chan *Shape),
+		Stopping:   make(chan struct{}),
+		Timer:      time.NewTimer(time.Duration(math.MaxInt64)),
+		Shape:      Shape{Rate: time.Duration(math.MaxInt64), PacketSize: 0},
 	}
 	////
 	s.connIDManager = newConnIDManager(
@@ -654,13 +657,23 @@ runLoop:
 				s.trafficShaping.Active = true
 				s.trafficShaping.Rate = properties.Rate
 				s.trafficShaping.PacketSize = properties.PacketSize
-				// We give time for the initial data packet to be packed
-				// so that we do not send an empty one instead.
-				s.trafficShaping.Timer.Reset(time.Millisecond)
-				continue runLoop
-			case <-s.trafficShaping.Timer.C:
-				//	Timer defines when to send the next packet.
 				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
+				//// We give time for the initial data packet to be packed
+				//// so that we do not send an empty one instead.
+				//s.trafficShaping.Timer.Reset(time.Millisecond)
+				if s.trafficShaping.BeforeData {
+					continue runLoop
+				}
+			case <-s.trafficShaping.Timer.C:
+				if s.trafficShaping.BeforeData {
+					// Essentially set send timer to infinity to wait
+					// for next signal from the application
+					s.trafficShaping.Timer.Reset(time.Second)
+					s.trafficShaping.BeforeData = false
+				} else {
+					//	Timer defines when to send the next packet.
+					s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
+				}
 			case <-s.trafficShaping.Stopping:
 				s.trafficShaping.Active = false
 				s.trafficShaping.Timer.Reset(time.Duration(math.MaxInt64))
