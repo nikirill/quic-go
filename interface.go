@@ -197,6 +197,8 @@ type Connection interface {
 
 	// StartTrafficShaping signals the connection to starts sending data at a constant rate.
 	StartTrafficShaping(int, int)
+	StartRateShaping(int)
+	StartPacketShaping(int)
 	// StopTrafficShaping signals the connection to return to the normal sending behavior.
 	StopTrafficShaping()
 	// PauseSending signals the connection to halts all transmission.
