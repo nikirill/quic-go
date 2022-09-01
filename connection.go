@@ -133,28 +133,27 @@ func nextConnTracingID() uint64 { return atomic.AddUint64(&connTracingID, 1) }
 
 // Manages traffic in metadata-private communication.
 type trafficShaping struct {
-	rateShapingOn   bool
-	packetShapingOn bool
-	Starting        chan *Shape
-	ShapeRate       chan time.Duration
-	ShapePackets    chan protocol.ByteCount
-	Stopping        chan struct{}
-	Pausing         chan time.Duration
-	Firing          chan struct{}
-	Timer           *time.Timer
-	Shape
+	rateShapingOn     bool
+	packetShapingOn   bool
+	rateShapingChan   chan time.Duration
+	packetShapingChan chan protocol.ByteCount
+	pausingChan       chan time.Duration
+	packetFiringChan  chan struct{}
+	stoppingChan      chan struct{}
+	timer             *time.Timer
+	shape
 }
 
-type Shape struct {
+type shape struct {
 	// Frequency of packets sent by the end point
-	Rate time.Duration
-	// If PacketSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
+	rate time.Duration
+	// If packetSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
 	// Otherwise, all packets are padded to max.
-	PacketSize protocol.ByteCount
+	packetSize protocol.ByteCount
 }
 
 func (ts *trafficShaping) PacketSizeFixed() bool {
-	return ts.Shape.PacketSize.NotZero()
+	return ts.shape.packetSize.NotZero()
 }
 
 // A Connection is a QUIC connection
@@ -292,16 +291,15 @@ var newConnection = func(
 	}
 	////
 	s.trafficShaping = &trafficShaping{
-		rateShapingOn:   false,
-		packetShapingOn: false,
-		Starting:        make(chan *Shape),
-		ShapeRate:       make(chan time.Duration),
-		ShapePackets:    make(chan protocol.ByteCount),
-		Stopping:        make(chan struct{}),
-		Pausing:         make(chan time.Duration),
-		Firing:          make(chan struct{}),
-		Timer:           time.NewTimer(time.Duration(math.MaxInt64)),
-		Shape:           Shape{Rate: time.Duration(math.MaxInt64), PacketSize: 0},
+		rateShapingOn:     false,
+		packetShapingOn:   false,
+		rateShapingChan:   make(chan time.Duration),
+		packetShapingChan: make(chan protocol.ByteCount),
+		pausingChan:       make(chan time.Duration),
+		packetFiringChan:  make(chan struct{}),
+		stoppingChan:      make(chan struct{}),
+		timer:             time.NewTimer(time.Duration(math.MaxInt64)),
+		shape:             shape{rate: time.Duration(math.MaxInt64), packetSize: 0},
 	}
 	////
 	if origDestConnID != nil {
@@ -438,16 +436,15 @@ var newClientConnection = func(
 	}
 	////
 	s.trafficShaping = &trafficShaping{
-		rateShapingOn:   false,
-		packetShapingOn: false,
-		Starting:        make(chan *Shape),
-		ShapeRate:       make(chan time.Duration),
-		ShapePackets:    make(chan protocol.ByteCount),
-		Stopping:        make(chan struct{}),
-		Pausing:         make(chan time.Duration),
-		Firing:          make(chan struct{}),
-		Timer:           time.NewTimer(time.Duration(math.MaxInt64)),
-		Shape:           Shape{Rate: time.Duration(math.MaxInt64), PacketSize: 0},
+		rateShapingOn:     false,
+		packetShapingOn:   false,
+		rateShapingChan:   make(chan time.Duration),
+		packetShapingChan: make(chan protocol.ByteCount),
+		pausingChan:       make(chan time.Duration),
+		packetFiringChan:  make(chan struct{}),
+		stoppingChan:      make(chan struct{}),
+		timer:             time.NewTimer(time.Duration(math.MaxInt64)),
+		shape:             shape{rate: time.Duration(math.MaxInt64), packetSize: 0},
 	}
 	////
 	s.connIDManager = newConnIDManager(
@@ -661,34 +658,28 @@ runLoop:
 			select {
 			case closeErr = <-s.closeChan:
 				break runLoop
-			case shape := <-s.trafficShaping.Starting:
+			case rate := <-s.trafficShaping.rateShapingChan:
 				s.trafficShaping.rateShapingOn = true
-				s.trafficShaping.packetShapingOn = true
-				s.trafficShaping.Rate = shape.Rate
-				s.trafficShaping.PacketSize = shape.PacketSize
-				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
+				s.trafficShaping.rate = rate
+				s.trafficShaping.timer.Reset(s.trafficShaping.rate)
 				//// We give time for the initial data packet to be packed
 				//// so that we do not send an empty one instead.
-				//s.trafficShaping.Timer.Reset(time.Millisecond)
-			case rate := <-s.trafficShaping.ShapeRate:
-				s.trafficShaping.rateShapingOn = true
-				s.trafficShaping.Rate = rate
-				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
-			case size := <-s.trafficShaping.ShapePackets:
+				//s.trafficShaping.timer.Reset(time.Millisecond)
+			case size := <-s.trafficShaping.packetShapingChan:
 				s.trafficShaping.packetShapingOn = true
-				s.trafficShaping.PacketSize = size
+				s.trafficShaping.packetSize = size
 				continue runLoop
-			case <-s.trafficShaping.Timer.C:
+			case <-s.trafficShaping.timer.C:
 				//	Timer defines when to send the next packet.
-				s.trafficShaping.Timer.Reset(s.trafficShaping.Rate)
-			case pause := <-s.trafficShaping.Pausing:
-				s.trafficShaping.Timer.Reset(pause)
+				s.trafficShaping.timer.Reset(s.trafficShaping.rate)
+			case pause := <-s.trafficShaping.pausingChan:
+				s.trafficShaping.timer.Reset(pause)
 				continue runLoop
-			case <-s.trafficShaping.Firing:
-			case <-s.trafficShaping.Stopping:
+			case <-s.trafficShaping.packetFiringChan:
+			case <-s.trafficShaping.stoppingChan:
 				s.trafficShaping.rateShapingOn = false
 				s.trafficShaping.packetShapingOn = false
-				s.trafficShaping.Timer.Reset(time.Duration(math.MaxInt64))
+				s.trafficShaping.timer.Reset(time.Duration(math.MaxInt64))
 			case <-s.timer.Chan():
 				s.timer.SetRead()
 				if s.handshakeComplete && s.trafficShaping.rateShapingOn {
@@ -800,7 +791,7 @@ runLoop:
 	s.cryptoStreamHandler.Close()
 	s.sendQueue.Close()
 	s.timer.Stop()
-	s.trafficShaping.Timer.Stop()
+	s.trafficShaping.timer.Stop()
 	return closeErr.err
 }
 
@@ -1898,7 +1889,7 @@ func (s *connection) sendPacket() (bool, error) {
 	var size protocol.ByteCount
 	if s.trafficShaping.packetShapingOn {
 		if s.trafficShaping.PacketSizeFixed() {
-			size = s.trafficShaping.PacketSize
+			size = s.trafficShaping.packetSize
 		} else {
 			size = s.packer.GetMaxPacketSize()
 		}
@@ -1914,7 +1905,7 @@ func (s *connection) sendPacket() (bool, error) {
 	if packet == nil && s.trafficShaping.rateShapingOn {
 		ping, size := s.mtuDiscoverer.GetPing()
 		if s.trafficShaping.PacketSizeFixed() {
-			size = s.trafficShaping.PacketSize
+			size = s.trafficShaping.packetSize
 		}
 		packet, err = s.packer.PackMTUProbePacket(ping, size)
 	}
@@ -2135,23 +2126,12 @@ func (s *connection) NextConnection() Connection {
 	return s
 }
 
-func (s *connection) StartTrafficShaping(rate, size int) {
-	s.trafficShaping.Starting <- &Shape{
-		Rate:       time.Duration(rate) * time.Millisecond,
-		PacketSize: protocol.ByteCount(size),
-	}
-}
-
 func (s *connection) StartRateShaping(rate int) {
-	s.trafficShaping.ShapeRate <- time.Duration(rate) * time.Millisecond
+	s.trafficShaping.rateShapingChan <- time.Duration(rate) * time.Millisecond
 }
 
 func (s *connection) StartPacketShaping(size int) {
-	s.trafficShaping.ShapePackets <- protocol.ByteCount(size)
-}
-
-func (s *connection) StopTrafficShaping() {
-	s.trafficShaping.Stopping <- struct{}{}
+	s.trafficShaping.packetShapingChan <- protocol.ByteCount(size)
 }
 
 // PauseSending pauses all the transmission by indicating to set transmission timer to MaxInt
@@ -2159,10 +2139,14 @@ func (s *connection) PauseSending() {
 	if !s.trafficShaping.rateShapingOn {
 		s.trafficShaping.rateShapingOn = true
 	}
-	s.trafficShaping.Pausing <- time.Duration(math.MaxInt64)
+	s.trafficShaping.pausingChan <- time.Duration(math.MaxInt64)
 }
 
 // FirePacket sends a single QUIC packet with either queued data or with ping-padding
 func (s *connection) FirePacket() {
-	s.trafficShaping.Firing <- struct{}{}
+	s.trafficShaping.packetFiringChan <- struct{}{}
+}
+
+func (s *connection) StopTrafficShaping() {
+	s.trafficShaping.stoppingChan <- struct{}{}
 }
