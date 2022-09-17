@@ -680,6 +680,7 @@ runLoop:
 				s.trafficShaping.rateShapingOn = false
 				s.trafficShaping.packetShapingOn = false
 				s.trafficShaping.timer.Reset(time.Duration(math.MaxInt64))
+				continue runLoop
 			case <-s.timer.Chan():
 				s.timer.SetRead()
 				if s.handshakeComplete && s.trafficShaping.rateShapingOn {
@@ -2149,4 +2150,9 @@ func (s *connection) FirePacket() {
 
 func (s *connection) StopTrafficShaping() {
 	s.trafficShaping.stoppingChan <- struct{}{}
+}
+
+func (s *connection) WaitForEmptyBuffer() {
+	for s.framer.HasData() {
+	}
 }

@@ -205,6 +205,8 @@ type Connection interface {
 	FirePacket()
 	// StopTrafficShaping signals the connection to return to the normal sending behavior.
 	StopTrafficShaping()
+	// WaitForEmptyBuffer blocks until no more data is enqueued for sending.
+	WaitForEmptyBuffer()
 }
 
 // An EarlyConnection is a connection that is handshaking.
