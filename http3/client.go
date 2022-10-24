@@ -1,7 +1,6 @@
 package http3
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -136,11 +135,11 @@ func (c *client) setupConn() error {
 	if err != nil {
 		return err
 	}
-	buf := &bytes.Buffer{}
-	quicvarint.Write(buf, streamTypeControlStream)
+	b := make([]byte, 0, 64)
+	b = quicvarint.Append(b, streamTypeControlStream)
 	// send the SETTINGS frame
-	(&settingsFrame{Datagram: c.opts.EnableDatagram, Other: c.opts.AdditionalSettings}).Write(buf)
-	_, err = str.Write(buf.Bytes())
+	b = (&settingsFrame{Datagram: c.opts.EnableDatagram, Other: c.opts.AdditionalSettings}).Append(b)
+	_, err = str.Write(b)
 	return err
 }
 
@@ -273,7 +272,9 @@ func (c *client) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.Respon
 	// This go routine keeps running even after RoundTripOpt() returns.
 	// It is shut down when the application is done processing the body.
 	reqDone := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		select {
 		case <-req.Context().Done():
 			str.CancelWrite(quic.StreamErrorCode(errorRequestCanceled))
@@ -282,9 +283,14 @@ func (c *client) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.Respon
 		}
 	}()
 
-	rsp, rerr := c.doRequest(req, str, opt, reqDone)
+	doneChan := reqDone
+	if opt.DontCloseRequestStream {
+		doneChan = nil
+	}
+	rsp, rerr := c.doRequest(req, str, opt, doneChan)
 	if rerr.err != nil { // if any error occurred
 		close(reqDone)
+		<-done
 		if rerr.streamErr != 0 { // if it was a stream error
 			str.CancelWrite(quic.StreamErrorCode(rerr.streamErr))
 		}
@@ -295,6 +301,11 @@ func (c *client) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.Respon
 			}
 			c.conn.CloseWithError(quic.ApplicationErrorCode(rerr.connErr), reason)
 		}
+		return nil, rerr.err
+	}
+	if opt.DontCloseRequestStream {
+		close(reqDone)
+		<-done
 	}
 	return rsp, rerr.err
 }
@@ -326,7 +337,7 @@ func (c *client) sendRequestBody(str Stream, body io.ReadCloser) error {
 	return nil
 }
 
-func (c *client) doRequest(req *http.Request, str quic.Stream, opt RoundTripOpt, reqDone chan struct{}) (*http.Response, requestError) {
+func (c *client) doRequest(req *http.Request, str quic.Stream, opt RoundTripOpt, reqDone chan<- struct{}) (*http.Response, requestError) {
 	var requestGzip bool
 	if !c.opts.DisableCompression && req.Method != "HEAD" && req.Header.Get("Accept-Encoding") == "" && req.Header.Get("Range") == "" {
 		requestGzip = true

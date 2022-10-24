@@ -18,12 +18,15 @@ type HTTPStreamer interface {
 }
 
 type StreamCreator interface {
+	// Context returns a context that is cancelled when the underlying connection is closed.
+	Context() context.Context
 	OpenStream() (quic.Stream, error)
 	OpenStreamSync(context.Context) (quic.Stream, error)
 	OpenUniStream() (quic.SendStream, error)
 	OpenUniStreamSync(context.Context) (quic.SendStream, error)
 	LocalAddr() net.Addr
 	RemoteAddr() net.Addr
+	ConnectionState() quic.ConnectionState
 }
 
 var _ StreamCreator = quic.Connection(nil)
@@ -110,7 +113,9 @@ func (r *hijackableBody) requestDone() {
 	if r.reqDoneClosed || r.reqDone == nil {
 		return
 	}
-	close(r.reqDone)
+	if r.reqDone != nil {
+		close(r.reqDone)
+	}
 	r.reqDoneClosed = true
 }
 
