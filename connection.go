@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net"
 	"reflect"
@@ -2154,5 +2155,7 @@ func (s *connection) StopTrafficShaping() {
 
 func (s *connection) WaitForEmptyBuffer() {
 	for s.framer.HasData() {
+		time.Sleep(s.trafficShaping.rate)
+		log.Printf("Waiting for empty buffer")
 	}
 }
