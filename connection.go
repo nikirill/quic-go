@@ -674,9 +674,6 @@ runLoop:
 				s.trafficShaping.rateShapingOn = true
 				s.trafficShaping.rate = rate
 				s.trafficShaping.timer.Reset(s.trafficShaping.rate)
-				//// We give time for the initial data packet to be packed
-				//// so that we do not send an empty one instead.
-				//s.trafficShaping.timer.Reset(time.Millisecond)
 			case size := <-s.trafficShaping.packetShapingChan:
 				s.trafficShaping.packetShapingOn = true
 				s.trafficShaping.packetSize = size
@@ -2271,7 +2268,7 @@ func (s *connection) NextConnection() Connection {
 	return s
 }
 
-func (s *connection) StartRateShaping(rate int) {
+func (s *connection) StartRateShaping(rate float64) {
 	s.trafficShaping.rateShapingChan <- time.Duration(rate) * time.Millisecond
 }
 
