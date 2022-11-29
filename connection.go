@@ -2268,7 +2268,7 @@ func (s *connection) NextConnection() Connection {
 	return s
 }
 
-func (s *connection) StartRateShaping(rate float64) {
+func (s *connection) StartRateShaping(rate int) {
 	s.trafficShaping.rateShapingChan <- time.Duration(rate) * time.Millisecond
 }
 

@@ -186,7 +186,7 @@ type Connection interface {
 	ReceiveMessage() ([]byte, error)
 
 	// StartRateShaping signals the connection to starts sending data at a constant rate.
-	StartRateShaping(float64)
+	StartRateShaping(int)
 	// StartPacketShaping signals the connection to send always fixed-sized packets.
 	StartPacketShaping(int)
 	// PauseSending signals the connection to halts all transmission.
