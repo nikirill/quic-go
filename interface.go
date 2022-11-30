@@ -185,18 +185,16 @@ type Connection interface {
 	// ReceiveMessage gets a message received in a datagram, as specified in RFC 9221.
 	ReceiveMessage() ([]byte, error)
 
-	// StartRateShaping signals the connection to starts sending data at a constant rate.
-	StartRateShaping(int)
+	// StartRateShaping signals the connection to pause data transmission.
+	StartRateShaping()
 	// StartPacketShaping signals the connection to send always fixed-sized packets.
 	StartPacketShaping(int)
-	// PauseSending signals the connection to halts all transmission.
-	PauseSending()
 	// FirePacket signals the connection to immediately transmit one packet without changing the shaping status
 	FirePacket()
 	// StopTrafficShaping signals the connection to return to the normal sending behavior.
 	StopTrafficShaping()
 	// WaitForEmptyBuffer blocks until no more data is enqueued for sending.
-	WaitForEmptyBuffer()
+	WaitForEmptyBuffer(time.Duration)
 }
 
 // An EarlyConnection is a connection that is handshaking.
