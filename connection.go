@@ -2265,8 +2265,10 @@ func (s *connection) StopTrafficShaping() {
 }
 
 func (s *connection) WaitForEmptyBuffer(pause time.Duration) {
+	ticker := time.NewTicker(pause)
+	defer ticker.Stop()
 	for s.framer.HasData() {
-		time.Sleep(pause)
-		log.Printf("Waiting for empty buffer")
+		log.Printf("Waiting for empty buffer: %v", s.framer.StreamsWithData())
+		<-ticker.C
 	}
 }
