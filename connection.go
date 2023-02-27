@@ -2272,3 +2272,7 @@ func (s *connection) WaitForEmptyBuffer(pause time.Duration) {
 		<-ticker.C
 	}
 }
+
+func (s *connection) HasDataInBuffer() bool {
+	return s.framer.HasData()
+}

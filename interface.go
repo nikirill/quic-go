@@ -195,6 +195,8 @@ type Connection interface {
 	StopTrafficShaping()
 	// WaitForEmptyBuffer blocks until no more data is enqueued for sending.
 	WaitForEmptyBuffer(time.Duration)
+	// HasDataInBuffer returns true if there is data enqueued for sending.
+	HasDataInBuffer() bool
 }
 
 // An EarlyConnection is a connection that is handshaking.
