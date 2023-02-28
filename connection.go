@@ -1951,22 +1951,17 @@ func (s *connection) sendPacket() (bool, error) {
 		s.sentFirstPacket = true
 		s.sendPackedCoalescedPacket(packet, now)
 		return true, nil
-	} else if !s.trafficShaping.rateShapingOn && !s.config.DisablePathMTUDiscovery && s.mtuDiscoverer.ShouldSendProbe(now) {
-		ping, size := s.mtuDiscoverer.GetPing()
-		if s.trafficShaping.packetShapingOn {
-			size = s.trafficShaping.packetSize
-			if !s.trafficShaping.PacketSizeFixed() {
-				size = s.packer.GetMaxPacketSize()
-			}
-		}
-		p, buffer, err := s.packer.PackMTUProbePacket(ping, size, now, s.version)
-		if err != nil {
-			return false, err
-		}
-		s.logShortHeaderPacket(p.DestConnID, p.Ack, p.Frames, p.PacketNumber, p.PacketNumberLen, p.KeyPhase, buffer.Len(), false)
-		s.sendPackedShortHeaderPacket(buffer, p.Packet, now)
-		return true, nil
 	}
+	//else if !s.config.DisablePathMTUDiscovery && s.mtuDiscoverer.ShouldSendProbe(now) {
+	//	ping, size := s.mtuDiscoverer.GetPing()
+	//	p, buffer, err := s.packer.PackMTUProbePacket(ping, size, now, s.version)
+	//	if err != nil {
+	//		return false, err
+	//	}
+	//	s.logShortHeaderPacket(p.DestConnID, p.Ack, p.Frames, p.PacketNumber, p.PacketNumberLen, p.KeyPhase, buffer.Len(), false)
+	//	s.sendPackedShortHeaderPacket(buffer, p.Packet, now)
+	//	return true, nil
+	//}
 
 	var size protocol.ByteCount
 	var p shortHeaderPacket
