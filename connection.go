@@ -1977,18 +1977,20 @@ func (s *connection) sendPacket() (bool, error) {
 		p, buffer, err = s.packer.PackPacket(false, now, s.version)
 	}
 	if err != nil {
-		if err == errNothingToPack && s.trafficShaping.rateShapingOn {
-			// If the endpoint is scheduled to send and traffic-shaping is on, but we have nothing to send,
-			// we send an MTU probe packet instead.
-			ping, size := s.mtuDiscoverer.GetPing()
-			if s.trafficShaping.PacketSizeFixed() {
-				size = s.trafficShaping.packetSize
-			}
-			p, buffer, err = s.packer.PackMTUProbePacket(ping, size, now, s.version)
-			if err != nil {
-				return false, err
-			}
-		} else {
+		if err != errNothingToPack {
+			return false, err
+		}
+		if !s.trafficShaping.rateShapingOn {
+			return false, nil
+		}
+		// If the endpoint is scheduled to send and traffic-shaping is on, but we have nothing to send,
+		// we send an MTU probe packet instead.
+		ping, size := s.mtuDiscoverer.GetPing()
+		if s.trafficShaping.PacketSizeFixed() {
+			size = s.trafficShaping.packetSize
+		}
+		p, buffer, err = s.packer.PackMTUProbePacket(ping, size, now, s.version)
+		if err != nil || p.Length == 0 {
 			return false, err
 		}
 	}
