@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lucas-clemente/quic-go/internal/protocol"
-	"github.com/lucas-clemente/quic-go/internal/utils"
-	"github.com/lucas-clemente/quic-go/internal/wire"
+	"github.com/quic-go/quic-go/internal/protocol"
+	"github.com/quic-go/quic-go/internal/utils"
+	"github.com/quic-go/quic-go/internal/wire"
 )
 
 type receivedPacketHandler struct {
@@ -25,13 +25,12 @@ func newReceivedPacketHandler(
 	sentPackets sentPacketTracker,
 	rttStats *utils.RTTStats,
 	logger utils.Logger,
-	version protocol.VersionNumber,
 ) ReceivedPacketHandler {
 	return &receivedPacketHandler{
 		sentPackets:      sentPackets,
-		initialPackets:   newReceivedPacketTracker(rttStats, logger, version),
-		handshakePackets: newReceivedPacketTracker(rttStats, logger, version),
-		appDataPackets:   newReceivedPacketTracker(rttStats, logger, version),
+		initialPackets:   newReceivedPacketTracker(rttStats, logger),
+		handshakePackets: newReceivedPacketTracker(rttStats, logger),
+		appDataPackets:   newReceivedPacketTracker(rttStats, logger),
 		lowest1RTTPacket: protocol.InvalidPacketNumber,
 	}
 }

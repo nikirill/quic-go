@@ -11,17 +11,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lucas-clemente/quic-go/internal/protocol"
-	"github.com/lucas-clemente/quic-go/internal/utils"
-	"github.com/lucas-clemente/quic-go/internal/wire"
-	"github.com/lucas-clemente/quic-go/logging"
+	"github.com/quic-go/quic-go/internal/protocol"
+	"github.com/quic-go/quic-go/internal/utils"
+	"github.com/quic-go/quic-go/internal/wire"
+	"github.com/quic-go/quic-go/logging"
 
 	"github.com/francoispqt/gojay"
 )
 
 // Setting of this only works when quic-go is used as a library.
 // When building a binary from this repository, the version can be set using the following go build flag:
-// -ldflags="-X github.com/lucas-clemente/quic-go/qlog.quicGoVersion=foobar"
+// -ldflags="-X github.com/quic-go/quic-go/qlog.quicGoVersion=foobar"
 var quicGoVersion = "(devel)"
 
 func init() {
@@ -33,7 +33,7 @@ func init() {
 		return
 	}
 	for _, d := range info.Deps {
-		if d.Path == "github.com/lucas-clemente/quic-go" {
+		if d.Path == "github.com/quic-go/quic-go" {
 			quicGoVersion = d.Version
 			if d.Replace != nil {
 				if len(d.Replace.Version) > 0 {
@@ -274,7 +274,15 @@ func (t *connectionTracer) toTransportParameters(tp *wire.TransportParameters) *
 	}
 }
 
-func (t *connectionTracer) SentPacket(hdr *wire.ExtendedHeader, packetSize logging.ByteCount, ack *logging.AckFrame, frames []logging.Frame) {
+func (t *connectionTracer) SentLongHeaderPacket(hdr *logging.ExtendedHeader, packetSize logging.ByteCount, ack *logging.AckFrame, frames []logging.Frame) {
+	t.sentPacket(*transformLongHeader(hdr), packetSize, hdr.Length, ack, frames)
+}
+
+func (t *connectionTracer) SentShortHeaderPacket(hdr *logging.ShortHeader, packetSize logging.ByteCount, ack *logging.AckFrame, frames []logging.Frame) {
+	t.sentPacket(*transformShortHeader(hdr), packetSize, 0, ack, frames)
+}
+
+func (t *connectionTracer) sentPacket(hdr gojay.MarshalerJSONObject, packetSize, payloadLen logging.ByteCount, ack *logging.AckFrame, frames []logging.Frame) {
 	numFrames := len(frames)
 	if ack != nil {
 		numFrames++
@@ -286,12 +294,11 @@ func (t *connectionTracer) SentPacket(hdr *wire.ExtendedHeader, packetSize loggi
 	for _, f := range frames {
 		fs = append(fs, frame{Frame: f})
 	}
-	header := *transformLongHeader(hdr)
 	t.mutex.Lock()
 	t.recordEvent(time.Now(), &eventPacketSent{
-		Header:        header,
+		Header:        hdr,
 		Length:        packetSize,
-		PayloadLength: hdr.Length,
+		PayloadLength: payloadLen,
 		Frames:        fs,
 	})
 	t.mutex.Unlock()
@@ -319,12 +326,11 @@ func (t *connectionTracer) ReceivedShortHeaderPacket(hdr *logging.ShortHeader, p
 		fs[i] = frame{Frame: f}
 	}
 	header := *transformShortHeader(hdr)
-	hdrLen := 1 + hdr.DestConnectionID.Len() + int(hdr.PacketNumberLen)
 	t.mutex.Lock()
 	t.recordEvent(time.Now(), &eventPacketReceived{
 		Header:        header,
 		Length:        packetSize,
-		PayloadLength: packetSize - protocol.ByteCount(hdrLen),
+		PayloadLength: packetSize - wire.ShortHeaderLen(hdr.DestConnectionID, hdr.PacketNumberLen),
 		Frames:        fs,
 	})
 	t.mutex.Unlock()

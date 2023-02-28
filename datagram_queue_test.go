@@ -3,8 +3,8 @@ package quic
 import (
 	"errors"
 
-	"github.com/lucas-clemente/quic-go/internal/utils"
-	"github.com/lucas-clemente/quic-go/internal/wire"
+	"github.com/quic-go/quic-go/internal/utils"
+	"github.com/quic-go/quic-go/internal/wire"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -59,6 +59,7 @@ var _ = Describe("Datagram Queue", func() {
 			Expect(queue.Peek()).To(Equal(f))
 			Expect(queue.Peek()).To(Equal(f))
 			queue.Pop()
+			Eventually(func() *wire.DatagramFrame { f = queue.Peek(); return f }).ShouldNot(BeNil())
 			f = queue.Peek()
 			Expect(f.Data).To(Equal([]byte("bar")))
 		})

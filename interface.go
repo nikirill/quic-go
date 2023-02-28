@@ -7,9 +7,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/lucas-clemente/quic-go/internal/handshake"
-	"github.com/lucas-clemente/quic-go/internal/protocol"
-	"github.com/lucas-clemente/quic-go/logging"
+	"github.com/quic-go/quic-go/internal/handshake"
+	"github.com/quic-go/quic-go/internal/protocol"
+	"github.com/quic-go/quic-go/logging"
 )
 
 // The StreamID is the ID of a QUIC stream.
@@ -176,7 +176,6 @@ type Connection interface {
 	// Context returns a context that is cancelled when the connection is closed.
 	Context() context.Context
 	// ConnectionState returns basic details about the QUIC connection.
-	// It blocks until the handshake completes.
 	// Warning: This API should not be considered stable and might change soon.
 	ConnectionState() ConnectionState
 
@@ -338,6 +337,11 @@ type Config struct {
 	// This can be useful if version information is exchanged out-of-band.
 	// It has no effect for a client.
 	DisableVersionNegotiationPackets bool
+	// Allow0RTT allows the application to decide if a 0-RTT connection attempt should be accepted.
+	// When set, 0-RTT is enabled. When not set, 0-RTT is disabled.
+	// Only valid for the server.
+	// Warning: This API should not be considered stable and might change soon.
+	Allow0RTT func(net.Addr) bool
 	// Enable QUIC datagram support (RFC 9221).
 	EnableDatagrams bool
 	Tracer          logging.Tracer

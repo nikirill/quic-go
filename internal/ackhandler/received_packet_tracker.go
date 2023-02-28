@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lucas-clemente/quic-go/internal/protocol"
-	"github.com/lucas-clemente/quic-go/internal/utils"
-	"github.com/lucas-clemente/quic-go/internal/wire"
+	"github.com/quic-go/quic-go/internal/protocol"
+	"github.com/quic-go/quic-go/internal/utils"
+	"github.com/quic-go/quic-go/internal/wire"
 )
 
 // number of ack-eliciting packets received before sending an ack.
@@ -31,21 +31,17 @@ type receivedPacketTracker struct {
 	lastAck                                 *wire.AckFrame
 
 	logger utils.Logger
-
-	version protocol.VersionNumber
 }
 
 func newReceivedPacketTracker(
 	rttStats *utils.RTTStats,
 	logger utils.Logger,
-	version protocol.VersionNumber,
 ) *receivedPacketTracker {
 	return &receivedPacketTracker{
 		packetHistory: newReceivedPacketHistory(),
 		maxAckDelay:   protocol.MaxAckDelay,
 		rttStats:      rttStats,
 		logger:        logger,
-		version:       version,
 	}
 }
 

@@ -1,20 +1,18 @@
 package quic
 
 import (
-	"bytes"
 	"crypto/rand"
 	"errors"
 	"net"
 	"time"
 
-	mocklogging "github.com/lucas-clemente/quic-go/internal/mocks/logging"
-	"github.com/lucas-clemente/quic-go/internal/protocol"
-	"github.com/lucas-clemente/quic-go/internal/utils"
-	"github.com/lucas-clemente/quic-go/internal/wire"
-	"github.com/lucas-clemente/quic-go/logging"
+	mocklogging "github.com/quic-go/quic-go/internal/mocks/logging"
+	"github.com/quic-go/quic-go/internal/protocol"
+	"github.com/quic-go/quic-go/internal/utils"
+	"github.com/quic-go/quic-go/internal/wire"
+	"github.com/quic-go/quic-go/logging"
 
 	"github.com/golang/mock/gomock"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -37,18 +35,17 @@ var _ = Describe("Packet Handler Map", func() {
 	)
 
 	getPacketWithPacketType := func(connID protocol.ConnectionID, t protocol.PacketType, length protocol.ByteCount) []byte {
-		buf := &bytes.Buffer{}
-		Expect((&wire.ExtendedHeader{
+		b, err := (&wire.ExtendedHeader{
 			Header: wire.Header{
-				IsLongHeader:     true,
 				Type:             t,
 				DestConnectionID: connID,
 				Length:           length,
 				Version:          protocol.VersionTLS,
 			},
 			PacketNumberLen: protocol.PacketNumberLen2,
-		}).Write(buf, protocol.VersionWhatever)).To(Succeed())
-		return buf.Bytes()
+		}).Append(nil, protocol.VersionWhatever)
+		Expect(err).ToNot(HaveOccurred())
+		return b
 	}
 
 	getPacket := func(connID protocol.ConnectionID) []byte {

@@ -6,9 +6,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/lucas-clemente/quic-go/internal/protocol"
-
-	"github.com/lucas-clemente/quic-go/internal/wire"
+	"github.com/quic-go/quic-go/internal/protocol"
+	"github.com/quic-go/quic-go/internal/wire"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -157,13 +156,22 @@ var _ = Describe("Tracing", func() {
 			tracer.RestoredTransportParameters(tp)
 		})
 
-		It("traces the SentPacket event", func() {
+		It("traces the SentLongHeaderPacket event", func() {
 			hdr := &ExtendedHeader{Header: Header{DestConnectionID: protocol.ParseConnectionID([]byte{1, 2, 3})}}
 			ack := &AckFrame{AckRanges: []AckRange{{Smallest: 1, Largest: 10}}}
 			ping := &PingFrame{}
-			tr1.EXPECT().SentPacket(hdr, ByteCount(1337), ack, []Frame{ping})
-			tr2.EXPECT().SentPacket(hdr, ByteCount(1337), ack, []Frame{ping})
-			tracer.SentPacket(hdr, 1337, ack, []Frame{ping})
+			tr1.EXPECT().SentLongHeaderPacket(hdr, ByteCount(1337), ack, []Frame{ping})
+			tr2.EXPECT().SentLongHeaderPacket(hdr, ByteCount(1337), ack, []Frame{ping})
+			tracer.SentLongHeaderPacket(hdr, 1337, ack, []Frame{ping})
+		})
+
+		It("traces the SentShortHeaderPacket event", func() {
+			hdr := &ShortHeader{DestConnectionID: protocol.ParseConnectionID([]byte{1, 2, 3})}
+			ack := &AckFrame{AckRanges: []AckRange{{Smallest: 1, Largest: 10}}}
+			ping := &PingFrame{}
+			tr1.EXPECT().SentShortHeaderPacket(hdr, ByteCount(1337), ack, []Frame{ping})
+			tr2.EXPECT().SentShortHeaderPacket(hdr, ByteCount(1337), ack, []Frame{ping})
+			tracer.SentShortHeaderPacket(hdr, 1337, ack, []Frame{ping})
 		})
 
 		It("traces the ReceivedVersionNegotiationPacket event", func() {

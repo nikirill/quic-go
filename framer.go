@@ -2,10 +2,10 @@ package quic
 
 import (
 	"errors"
-	"github.com/lucas-clemente/quic-go/internal/ackhandler"
-	"github.com/lucas-clemente/quic-go/internal/protocol"
-	"github.com/lucas-clemente/quic-go/internal/wire"
-	"github.com/lucas-clemente/quic-go/quicvarint"
+	"github.com/quic-go/quic-go/internal/ackhandler"
+	"github.com/quic-go/quic-go/internal/protocol"
+	"github.com/quic-go/quic-go/internal/wire"
+	"github.com/quic-go/quic-go/quicvarint"
 	"sync"
 )
 
@@ -14,10 +14,10 @@ type framer interface {
 	StreamsWithData() []protocol.StreamID
 
 	QueueControlFrame(wire.Frame)
-	AppendControlFrames([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
+	AppendControlFrames([]*ackhandler.Frame, protocol.ByteCount, protocol.VersionNumber) ([]*ackhandler.Frame, protocol.ByteCount)
 
 	AddActiveStream(protocol.StreamID)
-	AppendStreamFrames([]ackhandler.Frame, protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount)
+	AppendStreamFrames([]*ackhandler.Frame, protocol.ByteCount, protocol.VersionNumber) ([]*ackhandler.Frame, protocol.ByteCount)
 
 	Handle0RTTRejection() error
 }
@@ -26,7 +26,6 @@ type framerI struct {
 	mutex sync.Mutex
 
 	streamGetter streamGetter
-	version      protocol.VersionNumber
 
 	activeStreams map[protocol.StreamID]struct{}
 	streamQueue   []protocol.StreamID
@@ -37,14 +36,10 @@ type framerI struct {
 
 var _ framer = &framerI{}
 
-func newFramer(
-	streamGetter streamGetter,
-	v protocol.VersionNumber,
-) framer {
+func newFramer(streamGetter streamGetter) framer {
 	return &framerI{
 		streamGetter:  streamGetter,
 		activeStreams: make(map[protocol.StreamID]struct{}),
-		version:       v,
 	}
 }
 
@@ -74,16 +69,18 @@ func (f *framerI) QueueControlFrame(frame wire.Frame) {
 	f.controlFrameMutex.Unlock()
 }
 
-func (f *framerI) AppendControlFrames(frames []ackhandler.Frame, maxLen protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount) {
+func (f *framerI) AppendControlFrames(frames []*ackhandler.Frame, maxLen protocol.ByteCount, v protocol.VersionNumber) ([]*ackhandler.Frame, protocol.ByteCount) {
 	var length protocol.ByteCount
 	f.controlFrameMutex.Lock()
 	for len(f.controlFrames) > 0 {
 		frame := f.controlFrames[len(f.controlFrames)-1]
-		frameLen := frame.Length(f.version)
+		frameLen := frame.Length(v)
 		if length+frameLen > maxLen {
 			break
 		}
-		frames = append(frames, ackhandler.Frame{Frame: frame})
+		af := ackhandler.GetFrame()
+		af.Frame = frame
+		frames = append(frames, af)
 		length += frameLen
 		f.controlFrames = f.controlFrames[:len(f.controlFrames)-1]
 	}
@@ -100,7 +97,7 @@ func (f *framerI) AddActiveStream(id protocol.StreamID) {
 	f.mutex.Unlock()
 }
 
-func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.ByteCount) ([]ackhandler.Frame, protocol.ByteCount) {
+func (f *framerI) AppendStreamFrames(frames []*ackhandler.Frame, maxLen protocol.ByteCount, v protocol.VersionNumber) ([]*ackhandler.Frame, protocol.ByteCount) {
 	var length protocol.ByteCount
 	var lastFrame *ackhandler.Frame
 	f.mutex.Lock()
@@ -128,7 +125,7 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 		// Therefore, we can pretend to have more bytes available when popping
 		// the STREAM frame (which will always have the DataLen set).
 		remainingLen += quicvarint.Len(uint64(remainingLen))
-		frame, hasMoreData := str.popStreamFrame(remainingLen)
+		frame, hasMoreData := str.popStreamFrame(remainingLen, v)
 		if hasMoreData { // put the stream back in the queue (at the end)
 			f.streamQueue = append(f.streamQueue, id)
 		} else { // no more data to send. Stream is not active any more
@@ -140,8 +137,8 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 		if frame == nil {
 			continue
 		}
-		frames = append(frames, *frame)
-		length += frame.Length(f.version)
+		frames = append(frames, frame)
+		length += frame.Length(v)
 		lastFrame = frame
 		numActiveStreams--
 		// Makes sure that pack data frames into the same packet even if
@@ -154,10 +151,10 @@ func (f *framerI) AppendStreamFrames(frames []ackhandler.Frame, maxLen protocol.
 	}
 	f.mutex.Unlock()
 	if lastFrame != nil {
-		lastFrameLen := lastFrame.Length(f.version)
+		lastFrameLen := lastFrame.Length(v)
 		// account for the smaller size of the last STREAM frame
 		lastFrame.Frame.(*wire.StreamFrame).DataLenPresent = false
-		length += lastFrame.Length(f.version) - lastFrameLen
+		length += lastFrame.Length(v) - lastFrameLen
 	}
 	return frames, length
 }
