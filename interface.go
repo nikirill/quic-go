@@ -196,6 +196,8 @@ type Connection interface {
 	WaitForEmptyBuffer(time.Duration)
 	// HasDataInBuffer returns true if there is data enqueued for sending.
 	HasDataInBuffer() bool
+	// PacketReceived returns a channel that announces every packet reception.
+	PacketReceived() <-chan struct{}
 }
 
 // An EarlyConnection is a connection that is handshaking.

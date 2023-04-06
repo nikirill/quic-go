@@ -134,12 +134,13 @@ func nextConnTracingID() uint64 { return atomic.AddUint64(&connTracingID, 1) }
 
 // Manages traffic in metadata-private communication.
 type trafficShaping struct {
-	rateShapingOn     bool
-	packetShapingOn   bool
-	packetShapingChan chan protocol.ByteCount
-	rateShapingChan   chan struct{}
-	packetFiringChan  chan struct{}
-	stopShapingChan   chan struct{}
+	rateShapingOn      bool
+	packetShapingOn    bool
+	packetShapingChan  chan protocol.ByteCount
+	rateShapingChan    chan struct{}
+	packetFiringChan   chan struct{}
+	stopShapingChan    chan struct{}
+	packetReceivedChan chan struct{}
 	// If packetSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
 	// Otherwise, all packets are padded to max.
 	packetSize protocol.ByteCount
@@ -286,13 +287,14 @@ var newConnection = func(
 	}
 	////
 	s.trafficShaping = &trafficShaping{
-		rateShapingOn:     false,
-		packetShapingOn:   false,
-		rateShapingChan:   make(chan struct{}),
-		packetShapingChan: make(chan protocol.ByteCount),
-		packetFiringChan:  make(chan struct{}),
-		stopShapingChan:   make(chan struct{}),
-		packetSize:        0,
+		rateShapingOn:      false,
+		packetShapingOn:    false,
+		rateShapingChan:    make(chan struct{}),
+		packetShapingChan:  make(chan protocol.ByteCount),
+		packetFiringChan:   make(chan struct{}),
+		stopShapingChan:    make(chan struct{}),
+		packetReceivedChan: make(chan struct{}, 10),
+		packetSize:         0,
 	}
 	////
 	if origDestConnID.Len() > 0 {
@@ -421,13 +423,14 @@ var newClientConnection = func(
 	}
 	////
 	s.trafficShaping = &trafficShaping{
-		rateShapingOn:     false,
-		packetShapingOn:   false,
-		rateShapingChan:   make(chan struct{}),
-		packetShapingChan: make(chan protocol.ByteCount),
-		packetFiringChan:  make(chan struct{}),
-		stopShapingChan:   make(chan struct{}),
-		packetSize:        0,
+		rateShapingOn:      false,
+		packetShapingOn:    false,
+		rateShapingChan:    make(chan struct{}),
+		packetShapingChan:  make(chan protocol.ByteCount),
+		packetFiringChan:   make(chan struct{}),
+		stopShapingChan:    make(chan struct{}),
+		packetReceivedChan: make(chan struct{}, 10),
+		packetSize:         0,
 	}
 	////
 	s.connIDManager = newConnIDManager(
@@ -661,6 +664,7 @@ runLoop:
 					continue runLoop
 				}
 			case firstPacket := <-s.receivedPackets:
+				s.notifyPacketReceived()
 				wasProcessed := s.handlePacketImpl(firstPacket)
 				// Don't set timers and send packets if the packet made us close the connection.
 				select {
@@ -677,6 +681,7 @@ runLoop:
 					for i := 0; i < numPackets; i++ {
 						select {
 						case p := <-s.receivedPackets:
+							s.notifyPacketReceived()
 							if processed := s.handlePacketImpl(p); processed {
 								wasProcessed = true
 							}
@@ -2313,4 +2318,15 @@ func (s *connection) WaitForEmptyBuffer(pause time.Duration) {
 
 func (s *connection) HasDataInBuffer() bool {
 	return s.framer.HasData()
+}
+
+func (s *connection) notifyPacketReceived() {
+	select {
+	case s.trafficShaping.packetReceivedChan <- struct{}{}:
+	default:
+	}
+}
+
+func (s *connection) PacketReceived() <-chan struct{} {
+	return s.trafficShaping.packetReceivedChan
 }
