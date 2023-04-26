@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -144,6 +145,8 @@ type trafficShaping struct {
 	// If packetSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
 	// Otherwise, all packets are padded to max.
 	packetSize protocol.ByteCount
+	interFile  *os.File
+	timestamp  time.Time
 }
 
 func (ts *trafficShaping) PacketSizeFixed() bool {
@@ -293,10 +296,15 @@ var newConnection = func(
 		packetShapingChan:  make(chan protocol.ByteCount),
 		packetFiringChan:   make(chan struct{}),
 		stopShapingChan:    make(chan struct{}),
-		packetReceivedChan: make(chan struct{}, 10),
+		packetReceivedChan: make(chan struct{}, 64),
 		packetSize:         0,
 	}
-	////
+	var err1 error
+	s.trafficShaping.interFile, err1 = os.OpenFile("interpkt.csv", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+	if err1 != nil {
+		log.Fatalf("Could not open the file for writing data: %v", err1)
+	}
+	//
 	if origDestConnID.Len() > 0 {
 		s.logID = origDestConnID.String()
 	} else {
@@ -429,7 +437,7 @@ var newClientConnection = func(
 		packetShapingChan:  make(chan protocol.ByteCount),
 		packetFiringChan:   make(chan struct{}),
 		stopShapingChan:    make(chan struct{}),
-		packetReceivedChan: make(chan struct{}, 10),
+		packetReceivedChan: make(chan struct{}, 64),
 		packetSize:         0,
 	}
 	////
@@ -632,80 +640,81 @@ runLoop:
 		// If we processed any undecryptable packets, jump to the resetting of the timers directly.
 		if !processedUndecryptablePacket {
 			select {
-			case closeErr = <-s.closeChan:
-				break runLoop
-			case <-s.trafficShaping.rateShapingChan:
-				s.trafficShaping.rateShapingOn = true
-				continue runLoop
-			case size := <-s.trafficShaping.packetShapingChan:
-				s.trafficShaping.packetShapingOn = true
-				s.trafficShaping.packetSize = size
-				continue runLoop
 			case <-s.trafficShaping.packetFiringChan:
-			case <-s.trafficShaping.stopShapingChan:
-				s.trafficShaping.rateShapingOn = false
-				s.trafficShaping.packetShapingOn = false
-				continue runLoop
-			case <-s.timer.Chan():
-				s.timer.SetRead()
-				if s.handshakeComplete && s.trafficShaping.rateShapingOn {
-					continue runLoop
-				}
-				// We do all the interesting stuff after the switch statement, so
-				// nothing to see here.
-			case <-s.sendingScheduled:
-				if s.handshakeComplete && s.trafficShaping.rateShapingOn {
-					continue runLoop
-				}
-				// We do all the interesting stuff after the switch statement, so
-				// nothing to see here.
-			case <-sendQueueAvailable:
-				if s.handshakeComplete && s.trafficShaping.rateShapingOn {
-					continue runLoop
-				}
-			case firstPacket := <-s.receivedPackets:
-				s.notifyPacketReceived()
-				wasProcessed := s.handlePacketImpl(firstPacket)
-				// Don't set timers and send packets if the packet made us close the connection.
+			default:
 				select {
-				case closeErr = <-s.closeChan:
-					break runLoop
+				case firstPacket := <-s.receivedPackets:
+					//log.Printf("%d", time.Now().Sub(firstPacket.rcvTime).Microseconds())
+					//log.Printf("%d", time.Now().UnixMicro())
+					s.notifyPacketReceived()
+					wasProcessed := s.handlePacketImpl(firstPacket)
+					// Don't set timers and send packets if the packet made us close the connection.
+					select {
+					case closeErr = <-s.closeChan:
+						break runLoop
+					default:
+					}
+					if (s.handshakeComplete && s.trafficShaping.rateShapingOn) || !wasProcessed {
+						continue runLoop
+					}
 				default:
-				}
-				if s.handshakeComplete {
-					// Now process all packets in the receivedPackets channel.
-					// Limit the number of packets to the length of the receivedPackets channel,
-					// so we eventually get a chance to send out an ACK when receiving a lot of packets.
-					numPackets := len(s.receivedPackets)
-				receiveLoop:
-					for i := 0; i < numPackets; i++ {
-						select {
-						case p := <-s.receivedPackets:
-							s.notifyPacketReceived()
-							if processed := s.handlePacketImpl(p); processed {
-								wasProcessed = true
-							}
-							select {
-							case closeErr = <-s.closeChan:
-								break runLoop
-							default:
-							}
-						default:
-							break receiveLoop
+					select {
+					case closeErr = <-s.closeChan:
+						break runLoop
+					case <-s.trafficShaping.packetFiringChan:
+					case <-s.trafficShaping.rateShapingChan:
+						s.trafficShaping.rateShapingOn = true
+						continue runLoop
+					case size := <-s.trafficShaping.packetShapingChan:
+						s.trafficShaping.packetShapingOn = true
+						s.trafficShaping.packetSize = size
+						continue runLoop
+					case <-s.trafficShaping.stopShapingChan:
+						s.trafficShaping.rateShapingOn = false
+						s.trafficShaping.packetShapingOn = false
+						continue runLoop
+					//case <-s.timer.Chan():
+					//	//log.Printf("timer fired %d", time.Now().UnixMicro())
+					//	s.timer.SetRead()
+					//	if s.handshakeComplete && s.trafficShaping.rateShapingOn {
+					//		continue runLoop
+					//	}
+					//We do all the interesting stuff after the switch statement, so
+					//nothing to see here.
+					case <-s.sendingScheduled:
+						if s.handshakeComplete && s.trafficShaping.rateShapingOn {
+							continue runLoop
 						}
+						// We do all the interesting stuff after the switch statement, so
+						// nothing to see here.
+					case <-sendQueueAvailable:
+						if s.handshakeComplete && s.trafficShaping.rateShapingOn {
+							continue runLoop
+						}
+					case firstPacket := <-s.receivedPackets:
+						//log.Printf("%d", time.Now().Sub(firstPacket.rcvTime).Microseconds())
+						//log.Printf("%d", time.Now().UnixMicro())
+						s.notifyPacketReceived()
+						wasProcessed := s.handlePacketImpl(firstPacket)
+						// Don't set timers and send packets if the packet made us close the connection.
+						select {
+						case closeErr = <-s.closeChan:
+							break runLoop
+						default:
+						}
+						if s.handshakeComplete && s.trafficShaping.rateShapingOn {
+							continue runLoop
+						}
+						// Only reset the timers if this packet was actually processed.
+						// This avoids modifying any state when handling undecryptable packets,
+						// which could be injected by an attacker.
+						if !wasProcessed {
+							continue runLoop
+						}
+					case <-s.handshakeCompleteChan:
+						s.handleHandshakeComplete()
 					}
 				}
-				if s.handshakeComplete && s.trafficShaping.rateShapingOn {
-					continue runLoop
-				}
-				// Only reset the timers if this packet was actually processed.
-				// This avoids modifying any state when handling undecryptable packets,
-				// which could be injected by an attacker.
-				if !wasProcessed {
-					continue
-				}
-			case <-s.handshakeCompleteChan:
-				s.handleHandshakeComplete()
 			}
 		}
 
@@ -749,6 +758,9 @@ runLoop:
 		} else {
 			sendQueueAvailable = nil
 		}
+		//if s.trafficShaping.rateShapingOn {
+		//	s.trafficShaping.interFile.WriteString(fmt.Sprintf("%.7f, ", time.Since(s.trafficShaping.timestamp).Seconds()))
+		//}
 	}
 
 	s.cryptoStreamHandler.Close()
@@ -760,6 +772,7 @@ runLoop:
 	s.logger.Infof("Connection %s closed.", s.logID)
 	s.sendQueue.Close()
 	s.timer.Stop()
+	s.trafficShaping.interFile.Close()
 	return closeErr.err
 }
 
@@ -1942,6 +1955,19 @@ func (s *connection) sendProbePacket(encLevel protocol.EncryptionLevel) error {
 }
 
 func (s *connection) sendPacket() (bool, error) {
+	// A busy loop for precise timing.
+	//done := make(chan struct{})
+	//go func() {
+	//	//runtime.GOMAXPROCS(1)
+	//	for {
+	//		if time.Now().Sub(start) >= 50*time.Microsecond {
+	//			break
+	//		}
+	//	}
+	//	done <- struct{}{}
+	//}()
+	start := time.Now()
+
 	if isBlocked, offset := s.connFlowController.IsNewlyBlocked(); isBlocked {
 		s.framer.QueueControlFrame(&wire.DataBlockedFrame{MaximumData: offset})
 	}
@@ -1999,6 +2025,9 @@ func (s *connection) sendPacket() (bool, error) {
 			return false, err
 		}
 	}
+	//<-done
+	//close(done)
+	s.trafficShaping.interFile.WriteString(fmt.Sprintf("%.7f, ", time.Since(start).Seconds()))
 
 	s.logShortHeaderPacket(p.DestConnID, p.Ack, p.Frames, p.PacketNumber, p.PacketNumberLen, p.KeyPhase, buffer.Len(), false)
 	s.sendPackedShortHeaderPacket(buffer, p.Packet, now)
@@ -2329,4 +2358,8 @@ func (s *connection) notifyPacketReceived() {
 
 func (s *connection) PacketReceived() <-chan struct{} {
 	return s.trafficShaping.packetReceivedChan
+}
+
+func (s *connection) SetTimestamp() {
+	s.trafficShaping.timestamp = time.Now()
 }

@@ -198,6 +198,7 @@ type Connection interface {
 	HasDataInBuffer() bool
 	// PacketReceived returns a channel that announces every packet reception.
 	PacketReceived() <-chan struct{}
+	SetTimestamp()
 }
 
 // An EarlyConnection is a connection that is handshaking.

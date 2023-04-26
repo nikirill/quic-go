@@ -362,6 +362,7 @@ func (h *packetHandlerMap) listen() {
 	defer close(h.listening)
 	for {
 		p, err := h.conn.ReadPacket()
+		//log.Printf("-- %d %d", time.Now().UnixMicro(), time.Since(p.rcvTime).Microseconds())
 		//nolint:staticcheck // SA1019 ignore this!
 		// TODO: This code is used to ignore wsa errors on Windows.
 		// Since net.Error.Temporary is deprecated as of Go 1.18, we should find a better solution.

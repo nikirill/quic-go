@@ -141,7 +141,7 @@ func (f *framerI) AppendStreamFrames(frames []*ackhandler.Frame, maxLen protocol
 		length += frame.Length(v)
 		lastFrame = frame
 		numActiveStreams--
-		// Makes sure that pack data frames into the same packet even if
+		// Makes sure that we pack data frames into the same packet even if
 		// they are from the same stream. It addresses the use case when
 		// a data blob is split into two frames (a large one and a small one)
 		// and the small one has to be padded.
