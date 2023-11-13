@@ -196,9 +196,10 @@ type Connection interface {
 	WaitForEmptyBuffer(time.Duration)
 	// HasDataInBuffer returns true if there is data enqueued for sending.
 	HasDataInBuffer() bool
+	// StreamsWithData returns the IDs of streams that have data enqueued for sending.
+	StreamsWithData() []StreamID
 	// PacketReceived returns a channel that announces every packet reception.
 	PacketReceived() <-chan struct{}
-	SetTimestamp()
 }
 
 // An EarlyConnection is a connection that is handshaking.

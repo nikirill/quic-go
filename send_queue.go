@@ -14,32 +14,11 @@ type sendQueue struct {
 	runStopped  chan struct{} // runStopped when the run loop returns
 	available   chan struct{}
 	conn        sendConn
-	//interFile   *os.File
-	//timestamps  TimeQueue
 }
 
 var _ sender = &sendQueue{}
 
 const sendQueueCapacity = 8
-
-//type TimeQueue struct {
-//	sync.Mutex
-//	items []time.Time
-//}
-//
-//func (q *TimeQueue) Enqueue(item time.Time) {
-//	q.Lock()
-//	defer q.Unlock()
-//	q.items = append(q.items, item)
-//}
-//
-//func (q *TimeQueue) Dequeue() time.Time {
-//	q.Lock()
-//	defer q.Unlock()
-//	item := q.items[0]
-//	q.items = q.items[1:]
-//	return item
-//}
 
 func newSendQueue(conn sendConn) sender {
 	return &sendQueue{
@@ -50,18 +29,6 @@ func newSendQueue(conn sendConn) sender {
 		queue:       make(chan *packetBuffer, sendQueueCapacity),
 	}
 }
-
-//func newSendQueue(conn sendConn) sender {
-//	q := &sendQueue{
-//		conn:        conn,
-//		runStopped:  make(chan struct{}),
-//		closeCalled: make(chan struct{}),
-//		available:   make(chan struct{}, 1),
-//		queue:       make(chan *packetBuffer, sendQueueCapacity),
-//	}
-//	q.interFile, _ = os.OpenFile("interpkt.csv", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-//	return q
-//}
 
 // Send sends out a packet. It's guaranteed to not block.
 // Callers need to make sure that there's actually space in the send queue by calling WouldBlock.
@@ -103,9 +70,7 @@ func (h *sendQueue) Run() error {
 			h.closeCalled = nil // prevent this case from being selected again
 			// make sure that all queued packets are actually sent out
 			shouldClose = true
-			//h.interFile.Close()
 		case p := <-h.queue:
-			//before := time.Now()
 			if err := h.conn.Write(p.Data); err != nil {
 				// This additional check enables:
 				// 1. Checking for "datagram too large" message from the kernel, as such,
@@ -115,7 +80,6 @@ func (h *sendQueue) Run() error {
 					return err
 				}
 			}
-			//h.interFile.WriteString(fmt.Sprintf("%.7f, ", time.Since(before).Seconds()))
 			p.Release()
 			select {
 			case h.available <- struct{}{}:

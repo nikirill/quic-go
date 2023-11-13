@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
-	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -145,8 +143,6 @@ type trafficShaping struct {
 	// If packetSize is not 0, all the packets leaving the endpoint are padded/split to the given size.
 	// Otherwise, all packets are padded to max.
 	packetSize protocol.ByteCount
-	interFile  *os.File
-	timestamp  time.Time
 }
 
 func (ts *trafficShaping) PacketSizeFixed() bool {
@@ -296,13 +292,8 @@ var newConnection = func(
 		packetShapingChan:  make(chan protocol.ByteCount),
 		packetFiringChan:   make(chan struct{}),
 		stopShapingChan:    make(chan struct{}),
-		packetReceivedChan: make(chan struct{}, 64),
+		packetReceivedChan: make(chan struct{}, 16),
 		packetSize:         0,
-	}
-	var err1 error
-	s.trafficShaping.interFile, err1 = os.OpenFile("interpkt.csv", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-	if err1 != nil {
-		log.Fatalf("Could not open the file for writing data: %v", err1)
 	}
 	//
 	if origDestConnID.Len() > 0 {
@@ -437,7 +428,7 @@ var newClientConnection = func(
 		packetShapingChan:  make(chan protocol.ByteCount),
 		packetFiringChan:   make(chan struct{}),
 		stopShapingChan:    make(chan struct{}),
-		packetReceivedChan: make(chan struct{}, 64),
+		packetReceivedChan: make(chan struct{}, 16),
 		packetSize:         0,
 	}
 	////
@@ -644,10 +635,10 @@ runLoop:
 			default:
 				select {
 				case firstPacket := <-s.receivedPackets:
-					//log.Printf("%d", time.Now().Sub(firstPacket.rcvTime).Microseconds())
-					//log.Printf("%d", time.Now().UnixMicro())
 					s.notifyPacketReceived()
+					//from := time.Now()
 					wasProcessed := s.handlePacketImpl(firstPacket)
+					//log.Printf("--- %d", time.Since(from).Microseconds())
 					// Don't set timers and send packets if the packet made us close the connection.
 					select {
 					case closeErr = <-s.closeChan:
@@ -674,7 +665,6 @@ runLoop:
 						s.trafficShaping.packetShapingOn = false
 						continue runLoop
 					//case <-s.timer.Chan():
-					//	//log.Printf("timer fired %d", time.Now().UnixMicro())
 					//	s.timer.SetRead()
 					//	if s.handshakeComplete && s.trafficShaping.rateShapingOn {
 					//		continue runLoop
@@ -692,8 +682,6 @@ runLoop:
 							continue runLoop
 						}
 					case firstPacket := <-s.receivedPackets:
-						//log.Printf("%d", time.Now().Sub(firstPacket.rcvTime).Microseconds())
-						//log.Printf("%d", time.Now().UnixMicro())
 						s.notifyPacketReceived()
 						wasProcessed := s.handlePacketImpl(firstPacket)
 						// Don't set timers and send packets if the packet made us close the connection.
@@ -758,9 +746,6 @@ runLoop:
 		} else {
 			sendQueueAvailable = nil
 		}
-		//if s.trafficShaping.rateShapingOn {
-		//	s.trafficShaping.interFile.WriteString(fmt.Sprintf("%.7f, ", time.Since(s.trafficShaping.timestamp).Seconds()))
-		//}
 	}
 
 	s.cryptoStreamHandler.Close()
@@ -772,7 +757,6 @@ runLoop:
 	s.logger.Infof("Connection %s closed.", s.logID)
 	s.sendQueue.Close()
 	s.timer.Stop()
-	s.trafficShaping.interFile.Close()
 	return closeErr.err
 }
 
@@ -1955,19 +1939,13 @@ func (s *connection) sendProbePacket(encLevel protocol.EncryptionLevel) error {
 }
 
 func (s *connection) sendPacket() (bool, error) {
-	// A busy loop for precise timing.
 	//done := make(chan struct{})
 	//go func() {
-	//	//runtime.GOMAXPROCS(1)
-	//	for {
-	//		if time.Now().Sub(start) >= 50*time.Microsecond {
-	//			break
-	//		}
+	//	start := time.Now()
+	//	for time.Now().Sub(start) < 50*time.Microsecond {
 	//	}
 	//	done <- struct{}{}
 	//}()
-	start := time.Now()
-
 	if isBlocked, offset := s.connFlowController.IsNewlyBlocked(); isBlocked {
 		s.framer.QueueControlFrame(&wire.DataBlockedFrame{MaximumData: offset})
 	}
@@ -2025,11 +2003,10 @@ func (s *connection) sendPacket() (bool, error) {
 			return false, err
 		}
 	}
-	//<-done
-	//close(done)
-	s.trafficShaping.interFile.WriteString(fmt.Sprintf("%.7f, ", time.Since(start).Seconds()))
 
 	s.logShortHeaderPacket(p.DestConnID, p.Ack, p.Frames, p.PacketNumber, p.PacketNumberLen, p.KeyPhase, buffer.Len(), false)
+	//<-done
+	//close(done)
 	s.sendPackedShortHeaderPacket(buffer, p.Packet, now)
 	return true, nil
 }
@@ -2340,13 +2317,17 @@ func (s *connection) WaitForEmptyBuffer(pause time.Duration) {
 	ticker := time.NewTicker(pause)
 	defer ticker.Stop()
 	for s.framer.HasData() {
-		log.Printf("Waiting for empty buffer: %v", s.framer.StreamsWithData())
+		//log.Printf("Waiting for empty buffer: %v", s.framer.StreamsWithData())
 		<-ticker.C
 	}
 }
 
 func (s *connection) HasDataInBuffer() bool {
 	return s.framer.HasData()
+}
+
+func (s *connection) StreamsWithData() []protocol.StreamID {
+	return s.framer.StreamsWithData()
 }
 
 func (s *connection) notifyPacketReceived() {
@@ -2358,8 +2339,4 @@ func (s *connection) notifyPacketReceived() {
 
 func (s *connection) PacketReceived() <-chan struct{} {
 	return s.trafficShaping.packetReceivedChan
-}
-
-func (s *connection) SetTimestamp() {
-	s.trafficShaping.timestamp = time.Now()
 }
